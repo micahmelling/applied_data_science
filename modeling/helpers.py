@@ -46,6 +46,49 @@ def aggregate_offensive_data(df):
     df = df.groupby('playerID').agg({'G': 'sum', 'AB': 'sum', 'R': 'sum', 'H': 'sum', '2B': 'sum', '3B': 'sum',
                                      'HR': 'sum', 'RBI': 'sum', 'SB': 'sum', 'CS': 'sum', 'BB': 'sum', 'SO': 'sum',
                                      'IBB': 'sum', 'HBP': 'sum', 'SH': 'sum', 'SF': 'sum', 'GIDP': 'sum'})
-
     return df
+
+
+def calculate_offensive_statistics(df):
+    df['stolen_base_percentage'] = df['SB'] / (df['SB'] + df['CS'])
+    df['obp'] = (df['H'] + df['BB'] + df['HBP']) / (df['AB'] + df['BB'] + df['HBP'] + df['SF'])
+    df['slg'] = (df['H'] - (df['2B'] + df['3B'] + df['HR']) + df['2B'] * 2  + df['3B'] * 3 + df['HR'] * 4) / df['AB']
+    df['avg'] = df['H'] / df['AB']
+    df['ops'] = df['obp'] + df['slg']
+    df['extra_base_hits'] = df['HR'] + df['2B'] + df['3B']
+    return df
+
+
+def aggregate_pitching_data(df):
+    df = df.groupby('playerID').agg({'put_outs': 'sum', 'assists': 'sum', 'errors': 'sum'})
+    # TODO: add fielding percentage
+    return df
+
+
+def find_most_common_position(df):
+    df = df.groupby('player_id')['position'].agg(lambda x: x.mode() if len(x) > 2 else np.array(x))
+    df.columns = ['most_frequent_position']
+    df.reset_index(inplace=True)
+    return df
+
+
+def count_number_of_mvps_and_gold_gloves(df):
+    df = df.groupby(['playerID', 'awardID'])['awardID'].agg('count').unstack()
+    df.reset_index(inplace=True)
+
+    df['Gold Glove'].fillna(value=0, inplace=True)
+    df['Most Valuable Player'].fillna(value=0, inplace=True)
+
+    df['Gold Glove'] = df['Gold Glove'].astype('int')
+    df['Most Valuable Player'] = df['Most Valuable Player'].astype('int')
+
+    df.rename(columns={'Gold Glove': 'Gold_Gloves', 'Most Valuable Player': 'MVPs'}, inplace=True)
+    return df
+
+
+def find_world_series_wins_and_losses(df):
+    return df
+
+
+
 
