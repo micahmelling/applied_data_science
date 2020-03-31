@@ -1,0 +1,15 @@
+
+*.txt
+!requirements.txt
+*.pyc
+*.DS_Store
+*.csv
+*.xlsx
+*.db
+.idea/
+__pycache__/
+venv/
+scratch/web_scraping_exercise.py
+scratch/
+
+
