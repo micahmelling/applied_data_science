@@ -1,15 +1,18 @@
-
 *.txt
 !requirements.txt
 *.pyc
-*.DS_Store
 *.csv
 *.xlsx
+*.png
+*.jpeg
 *.db
+*.pkl
+*.dot
+*.DS_Store
 .idea/
 __pycache__/
 venv/
-scratch/web_scraping_exercise.py
+scratch.py
 scratch/
-
+create_ml_project_structure.sh
 
