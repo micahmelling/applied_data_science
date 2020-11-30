@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.model_selection import train_test_split
 
 
 def clip_feature_bounds(df, feature, cutoff, new_amount, clip_type):
@@ -109,6 +110,11 @@ def create_ratio_column(df, col1, col2):
     """
     df[col1 + '_' + col2 + '_ratio'] = df[col1] / df[col2]
     return df
+
+
+def create_train_test_split(x, y, test_size=0.25):
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_size, random_state=19)
+    return x_train, x_test, y_train, y_test
 
 
 class TakeLog(BaseEstimator, TransformerMixin):

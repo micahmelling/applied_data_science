@@ -10,3 +10,9 @@ tqdm==4.46.1
 ppscore==1.1.1
 numpy==1.19.2
 mlxtend==0.17.3
+xgboost==1.2.1
+catboost==0.24.2
+lightgbm==3.0.0
+shap==0.35.0
+Flask==1.1.2
+sentry-sdk[flask]==0.19.4
