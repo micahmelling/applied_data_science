@@ -5,14 +5,20 @@ from sklearn.preprocessing import StandardScaler, FunctionTransformer
 from sklearn.feature_selection import SelectPercentile, f_classif, VarianceThreshold
 from sklearn.feature_extraction import DictVectorizer
 
-from helpers.model_helpers import clip_feature_bounds, drop_features, convert_column_to_datetime, \
+from helpers.model_helpers import clip_feature_bounds, drop_features, convert_column_to_datetime, fill_missing_values, \
     extract_month_from_date, convert_month_to_quarter, extract_year_from_date, create_ratio_column, TakeLog, \
     CombineCategoryLevels, FeaturesToDict
 from helpers.constants import MONTH_TO_QUARTER_DICT
-from modeling.config import FEATURES_TO_DROP
+from modeling.config import FEATURES_TO_DROP, CATEGORICAL_FILL_VALUES
 
 
 def get_pipeline(model):
+    """
+    Generates a scikit-learn modeling pipeline with model as the final step.
+
+    :param model: instantiated model
+    :returns: scikit-learn pipeline
+    """
     numeric_transformer = Pipeline(steps=[
         ('mouse_movement_clipper', FunctionTransformer(clip_feature_bounds, validate=False,
                                                        kw_args={'feature': 'mouse_movement', 'cutoff': 0,
@@ -29,6 +35,8 @@ def get_pipeline(model):
         ('ratio_creator', FunctionTransformer(create_ratio_column, validate=False,
                                               kw_args={'col1': 'profile_score', 'col2': 'activity_score'})),
         ('log_creator', TakeLog()),
+        ('dict_creator', FeaturesToDict()),
+        ('dict_vectorizer', DictVectorizer(sparse=False)),
         ('imputer', SimpleImputer(strategy='mean')),
         ('scaler', StandardScaler())
     ])
@@ -43,23 +51,24 @@ def get_pipeline(model):
                                                            'mapping_dict': MONTH_TO_QUARTER_DICT})),
         ('year_extractor', FunctionTransformer(extract_year_from_date, validate=False,
                                                kw_args={'date_col': 'acquired_date'})),
+        ('date_dropper', FunctionTransformer(drop_features, validate=False,
+                                             kw_args={'feature_list': FEATURES_TO_DROP})),
+        ('imputer', FunctionTransformer(fill_missing_values, validate=False,
+                                        kw_args={'fill_value': CATEGORICAL_FILL_VALUES})),
         ('category_combiner', CombineCategoryLevels()),
-        ('imputer', SimpleImputer(strategy='constant', fill_value='unknown', add_indicator=True)),
         ('dict_creator', FeaturesToDict()),
-        ('dict_vectorizer', DictVectorizer()),
-        ('variance_thresholder', VarianceThreshold(threshold=(0.999 * (1 - 0.999))))
+        ('dict_vectorizer', DictVectorizer(sparse=False))
     ])
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ('numeric_transformer', numeric_transformer, selector(dtype_exclude='category')),
-            ('categorical_transformer', categorical_transformer, selector(dtype_include='category'))
+            ('numeric_transformer', numeric_transformer, selector(dtype_include='number')),
+            ('categorical_transformer', categorical_transformer, selector(dtype_exclude='number'))
         ])
 
     pipeline = Pipeline(steps=[
-        ('feature_dropper', FunctionTransformer(drop_features, validate=False,
-                                                kw_args={'features_drop_list': FEATURES_TO_DROP})),
         ('preprocessor', preprocessor),
+        ('variance_thresholder', VarianceThreshold()),
         ('feature_selector', SelectPercentile(f_classif)),
         ('model', model)
     ])

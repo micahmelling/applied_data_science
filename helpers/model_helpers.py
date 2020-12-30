@@ -1,8 +1,70 @@
+import os
 import pandas as pd
 import numpy as np
+import pytz
+import warnings
 
+from ds_helpers import aws
+from datetime import datetime
+from tqdm import tqdm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split
+
+from modeling.config import S3_BUCKET
+
+warnings.filterwarnings('ignore')
+
+
+def upload_model_directory_to_s3(model_directory):
+    """
+    Uploads an entire model's directory of data and diagnostics, along with the model itself, to S3.
+
+    :param model_directory: name of the model's directory
+    """
+    print(f'uploading all files in {model_directory}')
+    directory_walk = os.walk(model_directory)
+    for directory_path, directory_name, file_names in directory_walk:
+        if directory_path != os.path.join(model_directory):
+            sub_dir = os.path.basename(directory_path)
+            for file in tqdm(file_names):
+                aws.upload_file_to_s3(file_name=os.path.join(model_directory, sub_dir, file), bucket=S3_BUCKET)
+
+
+def make_directories_if_not_exists(directories_list):
+    """
+    Makes directories in the current working directory if they do not exist:
+
+    :param directories_list: list of directories to create
+    """
+    for directory in directories_list:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+
+def create_model_uid(model_name):
+    """
+    Creates a UID for a model.
+
+    :param model_name: the base name the model (e.g. random_forest)
+    :returns: unique string
+    """
+    tz = pytz.timezone('US/Central')
+    now = str(datetime.now(tz))
+    now = now.replace(' ', '').replace(':', '').replace('.', '').replace('-', '')
+    model_uid = model_name + '_' + now
+    return model_uid
+
+
+def fill_missing_values(df, fill_value):
+    """
+    Fills all missing values in a dataframe with fill_value.
+
+    :param df: pandas dataframe
+    :param fill_value: the fill value
+    :returns: pandas dataframe
+    """
+    df = df.fillna(value=fill_value)
+    return df
 
 
 def clip_feature_bounds(df, feature, cutoff, new_amount, clip_type):
@@ -70,7 +132,7 @@ def extract_month_from_date(df, date_col):
     :param date_col: name of the date column; expected to be of time pandas datetime
     :returns: pandas dataframe
     """
-    df['month'] = df[date_col].dt.month
+    df['month'] = df[date_col].dt.month.astype(str)
     return df
 
 
@@ -96,7 +158,7 @@ def extract_year_from_date(df, date_col):
     :param date_col: name of the date column; expected to be of time pandas datetime
     :returns: pandas dataframe
     """
-    df['month'] = df[date_col].dt.year
+    df['year'] = df[date_col].dt.year.astype(str)
     return df
 
 
@@ -112,7 +174,28 @@ def create_ratio_column(df, col1, col2):
     return df
 
 
+def create_x_y_split(df, target):
+    """
+    Splits a dataframe into predictor features (x) and the target values (y).
+
+    :param df: pandas dataframe
+    :param target: name of the target feature
+    :returns: x dataframe of predictors, y series of the target
+    """
+    y = df[target]
+    x = df.drop(target, 1)
+    return x, y
+
+
 def create_train_test_split(x, y, test_size=0.25):
+    """
+    Creates a train-test split for training and evaluation of machine learning models.
+
+    :param x: dataframe of predictor features
+    :param y: series of target values
+    :param test_size: percentage of observations to assign to the test set
+    :returns: x_train, x_test, y_train, y_test
+    """
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_size, random_state=19)
     return x_train, x_test, y_train, y_test
 
@@ -132,6 +215,7 @@ class TakeLog(BaseEstimator, TransformerMixin):
         if self.take_log == 'yes':
             for col in list(X):
                 X[col] = np.log(X[col])
+                X[col] = X[col].replace([np.inf, -np.inf], 0)
                 return X
         elif self.take_log == 'no':
             return X
