@@ -1,17 +1,22 @@
 import pandas as pd
+import pathlib
+import os
 
 from ds_helpers import db, aws
 
 from modeling.config import DB_SECRET_NAME
 
 
+path = pathlib.Path(__file__).parent.absolute()
+
+
 def get_training_data():
     """
     Retrieves the training data from MySQL.
     """
-    return pd.read_sql('''select * from churn_model.churn_data;''',
+    return pd.read_sql('''select * from churn_model.churn_data limit 10000;''',
                        db.connect_to_mysql(aws.get_secrets_manager_secret(DB_SECRET_NAME),
-                                           ssl_path='../data/rds-ca-2019-root.pem'))
+                                           ssl_path=os.path.join(path, 'rds-ca-2019-root.pem')))
 
 
 def log_feature_importance_to_mysql(df, schema):
@@ -24,7 +29,7 @@ def log_feature_importance_to_mysql(df, schema):
     """
     db.write_dataframe_to_database(df, schema, 'feature_score',
                                    db.connect_to_mysql(aws.get_secrets_manager_secret(DB_SECRET_NAME),
-                                                       ssl_path='../data/rds-ca-2019-root.pem'))
+                                                       ssl_path=os.path.join(path, 'rds-ca-2019-root.pem')))
 
 
 def log_model_scores_to_mysql(df, schema):
@@ -37,4 +42,4 @@ def log_model_scores_to_mysql(df, schema):
     """
     db.write_dataframe_to_database(df, schema, 'model_score',
                                    db.connect_to_mysql(aws.get_secrets_manager_secret(DB_SECRET_NAME),
-                                                       ssl_path='../data/rds-ca-2019-root.pem'))
+                                                       ssl_path=os.path.join(path, 'rds-ca-2019-root.pem')))

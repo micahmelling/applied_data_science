@@ -37,7 +37,7 @@ def train():
         pipeline = train_model(x_train, y_train, get_pipeline, model_name, model_config[0], model_config[1],
                                model_config[2], CV_TIMES, CV_SCORER)
         run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, CLASS_CUTOFF, TARGET, MODEL_EVALUATION_LIST,
-                                     CALIBRATION_BINS)
+                                     CALIBRATION_BINS, False)
         upload_model_directory_to_s3(model_name)
         print("--- {0} seconds for {1} loop to run ---".format(time.time() - loop_start_time, model_name))
     print("--- {} seconds for script to run ---" .format(time.time() - script_start_time))

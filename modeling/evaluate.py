@@ -139,7 +139,7 @@ def _produce_raw_shap_values(model, model_name, x_test, calibrated):
         shap_values = explainer.shap_values(x_test)[1]
         shap_df = pd.DataFrame(shap_values, columns=list(x_test))
         shap_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_values.csv'), index=False)
-        shap_expected_value = pd.DataFrame(explainer.expected_value[1], columns=['expected_value'])
+        shap_expected_value = pd.DataFrame({'expected_value': [explainer.expected_value[1]]})
         shap_expected_value.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_expected.csv'),
                                    index=False)
     return shap_values
@@ -189,7 +189,8 @@ def _prepare_data_for_shap(pipeline, x_test, n_obs=10_000):
     :param pipeline: scikit-learn pipeline with preprocessing steps and model
     :param x_test: x_test dataframe
     :param n_obs: the number of observations to keep in x_test because calculating SHAP values can be quite
-    computationally expensive; default is 10,000
+    computationally expensive; default is 10,000. If n_obs is greater than the total number of observations, then
+    50% of the data will be sampled.
     :returns: model with predict method, transformed x_test dataframe
     """
     # Extract the names of the features from the dict vectorizers
@@ -243,7 +244,10 @@ def _prepare_data_for_shap(pipeline, x_test, n_obs=10_000):
     remove_cols = remove_df['cols'].tolist()
     x_test.drop(remove_cols, 1, inplace=True)
 
-    x_test = x_test.sample(n=n_obs)
+    try:
+        x_test = x_test.sample(n=n_obs)
+    except ValueError:
+        x_test = x_test.sample(frac=0.5)
 
     return model, x_test
 
@@ -265,7 +269,7 @@ def produce_shap_values(model, x_test, model_name, calibrated=False):
 
 
 def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cutoff, target, evaluation_list,
-                                 calibration_bins):
+                                 calibration_bins, calibrated=True):
     """
     Runs a series of functions to evaluate a model's performance.
 
@@ -278,6 +282,7 @@ def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cut
     :param evaluation_list: list of tuples, which each tuple having the ordering of: the column with the predictions,
     the scoring function callable, and the name of the metric
     :param calibration_bins: number of bins in the calibration plot
+    :param calibrated: boolean of whether or not the pipeline has a CalibratedClassifierCV
     """
     print(f'evaluating {model_name}...')
     predictions_df = produce_predictions(pipeline, model_name, x_test, y_test, class_cutoff)
@@ -286,7 +291,7 @@ def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cut
     plot_calibration_curve(y_test, predictions_df['1_prob'], calibration_bins, 'quantile', model_name)
     model, x_test = _prepare_data_for_shap(pipeline, x_test)
     try:
-        produce_shap_values(model, x_test, model_name, calibrated=True)
+        produce_shap_values(model, x_test, model_name, calibrated=calibrated)
     except Exception as e:
         print(e)
         print(f'unable to run shap values for {model_name}')
