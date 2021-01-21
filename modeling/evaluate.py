@@ -2,12 +2,15 @@ import pandas as pd
 import numpy as np
 import os
 import shap
+import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 
 from copy import deepcopy
 from statistics import mean
 from sklearn.calibration import calibration_curve
+from sklearn.metrics import plot_roc_curve, roc_curve, confusion_matrix
+from mlxtend.evaluate import lift_score
 from tqdm import tqdm
 
 from modeling.config import DIAGNOSTICS_DIRECTORY, SCHEMA_NAME
@@ -96,7 +99,7 @@ def plot_calibration_curve(y_test, predictions, n_bins, bin_strategy, model_name
     transform = ax.transAxes
     line.set_transform(transform)
     ax.add_line(line)
-    fig.suptitle('Calibration Plot')
+    fig.suptitle(f'Calibration Plot')
     ax.set_xlabel('Predicted Probability')
     ax.set_ylabel('True Probability in Each Bin')
     plt.legend()
@@ -105,6 +108,139 @@ def plot_calibration_curve(y_test, predictions, n_bins, bin_strategy, model_name
     calibration_df = pd.DataFrame({'prob_true': prob_true, 'prob_pred': prob_pred})
     calibration_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY,
                                        f'{model_name}_{bin_strategy}_calibration_summary.csv'), index=False)
+
+
+def produce_roc_curve_plot(pipeline, x_test, y_test, model_name):
+    """
+    Produces a ROC curve plot and saves the result locally.
+
+    :param pipeline: scikit-learn modeling pipeline
+    :param x_test: x_test dataframe
+    :param y_test: y_test series
+    :param model_name: string name of the model
+    """
+    plot_roc_curve(pipeline, x_test, y_test)
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'roc_curve.png'))
+    plt.clf()
+
+
+def find_optimal_class_cutoff(y_test, predictions, model_name):
+    """
+    Finds the optimal class cutoff based on the ROC curve and saves the result locally.
+
+    :param y_test: y_test series
+    :param predictions: probability predictions for the positive class
+    :param model_name: string name of the model
+    """
+    fpr, tpr, threshold = roc_curve(y_test, predictions)
+    optimal_idx = np.argmax(tpr - fpr)
+    optimal_threshold = threshold[optimal_idx]
+    best_tpr = tpr[optimal_idx]
+    best_fpr = fpr[optimal_idx]
+    df = pd.DataFrame({'optimal_threshold': [optimal_threshold], 'best_tpr': [best_tpr], 'best_fpr': [best_fpr]})
+    df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'optimal_class_cutoff.csv'), index=False)
+    return
+
+
+def plot_confusion_matrix(y_test, class_predictions, model_name):
+    """
+    Plots a confusion matrix ans saves it locally.
+
+    :param y_test: y_test series
+    :param class_predictions: class predictions series
+    :param model_name: string name of the model
+    """
+    data_cm = confusion_matrix(y_test, class_predictions)
+    tn, fp, fn, tp = data_cm.ravel()
+    fpr = round((fp / (fp + tn)) * 100, 2)
+    fnr = round((fn / (fn + tp)) * 100, 2)
+    df_cm = pd.DataFrame(data_cm, columns=np.unique(y_test), index=np.unique(y_test))
+    df_cm.index.name = 'Actual'
+    df_cm.columns.name = 'Predicted'
+    plt.figure(figsize=(10, 7))
+    sns.set(font_scale=1.4)
+    sns.heatmap(df_cm, cmap="Blues", annot=True, annot_kws={"size": 16}, cbar=False, fmt='g')
+    plt.suptitle('Confusion Matrix')
+    plt.title(f'FPR: {fpr}%    FNR: {fnr}%')
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'confusion_matrix.png'))
+    plt.clf()
+
+
+def get_bootstrap_estimate(y_test, prediction_series, scoring_metric, metric_name, model_name, samples=30):
+    """
+    Produces a bootstrap estimate for a scoring metric. y_test and it's associated predictions are sampled with
+    replacement. The samples argument dictates how many times to perform each sampling. Each sample is of equal length,
+    determined by len(y_test) / samples. Summary statistics and a density plot of the distribution are saved locally.
+
+    :param y_test: y_test series
+    :param prediction_series: relevant prediction series
+    :param scoring_metric: scikit-learn scoring metric callable (e.g. roc_auc_score)
+    :param metric_name: string name of the metric
+    :param model_name: string name of the model
+    :param samples: number of samples to take; default is 30
+    """
+    y_test = y_test.reset_index(drop=True)
+    prediction_series = prediction_series.reset_index(drop=True)
+    df = pd.concat([y_test, prediction_series], axis=1)
+    approx_sample_size = int(len(df) / samples)
+    metrics_df = pd.DataFrame()
+
+    for sample in range(samples):
+        temp_df = df.sample(n=approx_sample_size)
+        score = scoring_metric(temp_df.iloc[:, 0], temp_df.iloc[:, 1])
+        temp_df = pd.DataFrame({'score': [score]})
+        metrics_df = metrics_df.append(temp_df)
+    described_df = metrics_df.describe()
+    described_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{metric_name}_sample_scores.csv'))
+
+    sns.kdeplot(metrics_df['score'], shade=True, color='b', legend=False)
+    plt.xlabel(metric_name)
+    plt.ylabel('density')
+    plt.title(f'{metric_name} distribution')
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{metric_name}_density_plot.png'))
+    plt.clf()
+
+
+def calculate_class_lift(y_test, class_predictions, model_name):
+    """
+    Calculates the lift of a model, based on predicted class labels.
+
+    :param y_test: y_test series
+    :param class_predictions: class predictions series
+    :param model_name: string name of the model
+    """
+    lift = lift_score(y_test, class_predictions)
+    pd.DataFrame({'lift': [lift]}).to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'class_lift.csv'))
+
+
+def calculate_probability_lift(y_test, probability_predictions, model_name, bins=10):
+    """
+    Calculates the lift provided by the probability estimates.
+
+    :param y_test: y_test series
+    :param probability_predictions: positive probability predictions series
+    :param model_name: string name of the model
+    :param bins: number of bins to segment the probability predictions
+    :param model_name: string name of the model
+    """
+    y_test = y_test.reset_index(drop=True)
+    prediction_series = probability_predictions.reset_index(drop=True)
+    df = pd.concat([y_test, prediction_series], axis=1)
+    columns = list(df)
+    class_col = columns[0]
+    proba_col = columns[1]
+    base_rate = df[class_col].mean()
+
+    df['1_prob_bin'] = pd.qcut(df[proba_col], q=bins, labels=list(range(1, 11)))
+    grouped_df = df.groupby('1_prob_bin').agg({proba_col: 'mean', class_col: 'mean'})
+    grouped_df.reset_index(inplace=True)
+    grouped_df['1_prob_diff'] = grouped_df[proba_col] - grouped_df[class_col]
+    grouped_df['base_rate_diff'] = base_rate - grouped_df[class_col]
+
+    prob_diff = grouped_df['1_prob_diff'].abs().sum()
+    base_rate_diff = grouped_df['base_rate_diff'].abs().sum()
+    lift = base_rate_diff / prob_diff
+    pd.DataFrame({'lift': [lift]}).to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'proba_lift.csv'))
 
 
 def _produce_raw_shap_values(model, model_name, x_test, calibrated):
@@ -269,7 +405,7 @@ def produce_shap_values(model, x_test, model_name, calibrated=False):
 
 
 def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cutoff, target, evaluation_list,
-                                 calibration_bins, calibrated=True):
+                                 calibration_bins, calibrated=False):
     """
     Runs a series of functions to evaluate a model's performance.
 
@@ -282,7 +418,7 @@ def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cut
     :param evaluation_list: list of tuples, which each tuple having the ordering of: the column with the predictions,
     the scoring function callable, and the name of the metric
     :param calibration_bins: number of bins in the calibration plot
-    :param calibrated: boolean of whether or not the pipeline has a CalibratedClassifierCV
+    :param calibrated: boolean of whether or not the pipeline has a CalibratedClassifierCV; default is False
     """
     print(f'evaluating {model_name}...')
     predictions_df = produce_predictions(pipeline, model_name, x_test, y_test, class_cutoff)

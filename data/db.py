@@ -14,7 +14,7 @@ def get_training_data():
     """
     Retrieves the training data from MySQL.
     """
-    return pd.read_sql('''select * from churn_model.churn_data limit 10000;''',
+    return pd.read_sql('''select * from churn_model.churn_data;''',
                        db.connect_to_mysql(aws.get_secrets_manager_secret(DB_SECRET_NAME),
                                            ssl_path=os.path.join(path, 'rds-ca-2019-root.pem')))
 
