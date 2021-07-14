@@ -10,20 +10,6 @@ from ds_helpers import db, aws
 
 
 def download_folder_from_s3(bucket_name, directory):
-    """
-    Downloads the contents of an entire folder from an S3 bucket into a local directory. If the remote directory is root,
-    then the local directory name is constructed with the f-string f's3_{bucket_name}'. Otherwise, the name of the remote
-    directory is also the name of the local directory.
-
-    Parameters
-    ----------
-        bucket_name: name of the S3 bucket
-        directory: name of the directory in the S3 bucket
-
-    Returns
-    -------
-        this function does not return anything
-    """
     s3_resource = boto3.resource('s3')
     bucket = s3_resource.Bucket(bucket_name)
 

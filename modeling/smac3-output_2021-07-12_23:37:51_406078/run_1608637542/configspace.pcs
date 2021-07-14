@@ -1,6 +1,0 @@
-feature_selector__percentile integer [1, 100] [50]
-model__max_depth integer [3, 31] [10]
-model__max_features categorical {sqrt, log2} [sqrt]
-model__min_samples_leaf real [0.0001, 0.01] [0.001]
-preprocessor__categorical_transformer__category_combiner__combine_categories categorical {yes, no} [yes]
-preprocessor__numeric_transformer__log_creator__take_log categorical {yes, no} [yes]
