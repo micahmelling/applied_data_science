@@ -1,1 +1,0 @@
-MAPPING = 'normal'

@@ -1,0 +1,116 @@
+{
+  "data": [
+    [
+      [
+        1,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.28122830041,
+        5.6965413093566895,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150674.675262,
+        1626150680.419297,
+        {}
+      ]
+    ],
+    [
+      [
+        2,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2832648034573675,
+        5.439613342285156,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150681.1951501,
+        1626150686.685117,
+        {}
+      ]
+    ],
+    [
+      [
+        3,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2801868122001339,
+        5.66341495513916,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150687.426234,
+        1626150693.143533,
+        {}
+      ]
+    ],
+    [
+      [
+        4,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2933693645792361,
+        5.119810104370117,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150694.037228,
+        1626150699.207548,
+        {}
+      ]
+    ]
+  ],
+  "config_origins": {
+    "1": "Sobol",
+    "2": "Random Search (sorted)",
+    "3": "Random Search (sorted)",
+    "4": "Random Search (sorted)"
+  },
+  "configs": {
+    "1": {
+      "feature_selector__percentile": 50,
+      "model__max_depth": 17,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.005050000000000001,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "no",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    },
+    "2": {
+      "feature_selector__percentile": 87,
+      "model__max_depth": 31,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.004962897731139364,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "yes"
+    },
+    "3": {
+      "feature_selector__percentile": 46,
+      "model__max_depth": 24,
+      "model__max_features": "sqrt",
+      "model__min_samples_leaf": 0.00636265407545667,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    },
+    "4": {
+      "feature_selector__percentile": 10,
+      "model__max_depth": 20,
+      "model__max_features": "sqrt",
+      "model__min_samples_leaf": 0.007557608640304671,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "no",
+      "preprocessor__numeric_transformer__log_creator__take_log": "yes"
+    }
+  }
+}

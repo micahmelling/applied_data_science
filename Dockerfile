@@ -8,6 +8,9 @@ RUN mkdir /app
 WORKDIR /app
 COPY . /app
 RUN chown -R appuser:docker /app
-USER appuser
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 RUN pip install --no-cache-dir -r requirements.txt
-
+USER appuser
+EXPOSE 8000
+RUN chmod a+rx run.sh
+ENTRYPOINT ["./run.sh"]

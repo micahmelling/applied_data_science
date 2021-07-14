@@ -1,26 +1,28 @@
 import pandas as pd
 import numpy as np
 import os
-import shap
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import scikitplot as skplt
+import itertools
+import multiprocessing as mp
 
-from copy import deepcopy
-from statistics import mean
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import plot_roc_curve, roc_curve, confusion_matrix
 from mlxtend.evaluate import lift_score
-from tqdm import tqdm
+from mlxtend.evaluate import mcnemar, mcnemar_table, cochrans_q, bias_variance_decomp
+from mlxtend.plotting import checkerboard_plot
+from scipy.stats import ks_2samp
 
 from modeling.config import DIAGNOSTICS_DIRECTORY, SCHEMA_NAME
-from data.db import log_feature_importance_to_mysql, log_model_scores_to_mysql
+from data.db import log_model_scores_to_mysql
 
 
 def produce_predictions(pipeline, model_name, x_test, y_test, class_cutoff):
     """
-    Produces a dataframe consisting of the probability and class predictions from the model on the test set, along
-    with the y_test and x_test values. The dataframe is saved locally.
+    Produces a dataframe consisting of the probability and class predictions from the model on the test set along
+    with the y_test. The dataframe is saved locally.
 
     :param pipeline: scikit-learn modeling pipeline
     :param model_name: name of the model
@@ -32,13 +34,12 @@ def produce_predictions(pipeline, model_name, x_test, y_test, class_cutoff):
     df = pd.concat(
         [
             pd.DataFrame(pipeline.predict_proba(x_test), columns=['0_prob', '1_prob']),
-            y_test.reset_index(drop=True),
-            x_test.reset_index(drop=True)
+            y_test.reset_index(drop=True)
         ],
         axis=1)
     df['predicted_class'] = np.where(df['1_prob'] >= class_cutoff, 1, 0)
     df = df[['predicted_class'] + [col for col in df.columns if col != 'predicted_class']]
-    df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_predictions.csv'), index=False)
+    df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'predictions_vs_actuals.csv'), index=False)
     return df
 
 
@@ -79,12 +80,12 @@ def run_evaluation_metrics(df, target, model_name, evaluation_list):
     main_df['model_uid'] = model_name
     main_df['holdout_type'] = 'test'
     log_model_scores_to_mysql(main_df, SCHEMA_NAME)
-    main_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_evaluation.csv'), index=False)
+    main_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'evaluation_scores.csv'), index=False)
 
 
 def plot_calibration_curve(y_test, predictions, n_bins, bin_strategy, model_name):
     """
-    Produces a calibration plot and saves it locally.
+    Produces a calibration plot and saves it locally. The raw data behind the plot is also written locally.
 
     :param y_test: y_test series
     :param predictions: predictions series
@@ -103,11 +104,11 @@ def plot_calibration_curve(y_test, predictions, n_bins, bin_strategy, model_name
     ax.set_xlabel('Predicted Probability')
     ax.set_ylabel('True Probability in Each Bin')
     plt.legend()
-    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_{bin_strategy}_calibration_plot.png'))
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{bin_strategy}_{n_bins}_calibration_plot.png'))
     plt.clf()
     calibration_df = pd.DataFrame({'prob_true': prob_true, 'prob_pred': prob_pred})
     calibration_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY,
-                                       f'{model_name}_{bin_strategy}_calibration_summary.csv'), index=False)
+                                       f'{bin_strategy}_{n_bins}_calibration_summary.csv'), index=False)
 
 
 def produce_roc_curve_plot(pipeline, x_test, y_test, model_name):
@@ -124,22 +125,23 @@ def produce_roc_curve_plot(pipeline, x_test, y_test, model_name):
     plt.clf()
 
 
-def find_optimal_class_cutoff(y_test, predictions, model_name):
+def find_optimal_class_cutoff(y_test, probability_predictions, model_name):
     """
     Finds the optimal class cutoff based on the ROC curve and saves the result locally.
 
     :param y_test: y_test series
-    :param predictions: probability predictions for the positive class
+    :param probability_predictions: probability predictions for the positive class
     :param model_name: string name of the model
+    :return: float that represents the optimal threshold
     """
-    fpr, tpr, threshold = roc_curve(y_test, predictions)
+    fpr, tpr, threshold = roc_curve(y_test, probability_predictions)
     optimal_idx = np.argmax(tpr - fpr)
     optimal_threshold = threshold[optimal_idx]
     best_tpr = tpr[optimal_idx]
     best_fpr = fpr[optimal_idx]
     df = pd.DataFrame({'optimal_threshold': [optimal_threshold], 'best_tpr': [best_tpr], 'best_fpr': [best_fpr]})
     df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'optimal_class_cutoff.csv'), index=False)
-    return
+    return optimal_threshold
 
 
 def plot_confusion_matrix(y_test, class_predictions, model_name):
@@ -213,15 +215,31 @@ def calculate_class_lift(y_test, class_predictions, model_name):
     pd.DataFrame({'lift': [lift]}).to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'class_lift.csv'))
 
 
-def calculate_probability_lift(y_test, probability_predictions, model_name, bins=10):
+def calculate_probability_lift(y_test, probability_predictions, model_name, n_bins=10):
     """
-    Calculates the lift provided by the probability estimates.
+    Calculates the lift provided by the probability estimates. Lift is determined by how much improvement is experienced
+    by using the predicted probabilities over assuming that each observation has the same probability of being in the
+    positive class (i.e. applying the overall rate of occurrence of the positive class to all observations).
+
+    This process takes the following steps:
+    - find the overall rate of occurrence of the positive class
+    - cut the probability estimates into n_bins
+    - for each bin, calculate:
+       - the average predicted probability
+       - the actual probability
+    -  for each bin, calculate
+       - the difference between the average predicted probability and the true probability
+       - the difference between the overall rate of occurrence and the true probability
+    - take the sum of the absolute value for each the differences calculated in the previous step
+    - take the ratio of the two sums, with the base rate sum as the numerator
+
+    Values above 1 indicate the predicted probabilities have lift over simply assuming each observation has the same
+    probability.
 
     :param y_test: y_test series
     :param probability_predictions: positive probability predictions series
     :param model_name: string name of the model
-    :param bins: number of bins to segment the probability predictions
-    :param model_name: string name of the model
+    :param n_bins: number of bins to segment the probability predictions
     """
     y_test = y_test.reset_index(drop=True)
     prediction_series = probability_predictions.reset_index(drop=True)
@@ -231,7 +249,7 @@ def calculate_probability_lift(y_test, probability_predictions, model_name, bins
     proba_col = columns[1]
     base_rate = df[class_col].mean()
 
-    df['1_prob_bin'] = pd.qcut(df[proba_col], q=bins, labels=list(range(1, 11)))
+    df['1_prob_bin'] = pd.qcut(df[proba_col], q=n_bins, labels=list(range(1, 11)))
     grouped_df = df.groupby('1_prob_bin').agg({proba_col: 'mean', class_col: 'mean'})
     grouped_df.reset_index(inplace=True)
     grouped_df['1_prob_diff'] = grouped_df[proba_col] - grouped_df[class_col]
@@ -243,169 +261,189 @@ def calculate_probability_lift(y_test, probability_predictions, model_name, bins
     pd.DataFrame({'lift': [lift]}).to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'proba_lift.csv'))
 
 
-def _produce_raw_shap_values(model, model_name, x_test, calibrated):
+def plot_cumulative_gains_chart(y_test, probability_predictions, model_name):
     """
-    Produces the raw shap values for every observation in the test set. A dataframe of the shap values is saved locally
-    as a csv. The shap expected value is extracted and save locally in a csv.
+    Produces a cumulative gains chart and saves it locally.
 
-    :param model: fitted model
-    :param model_name: name of the model
-    :param x_test: x_test
-    :param calibrated: boolean of whether or not the model is a CalibratedClassifierCV; the default is False
-    :returns: numpy array
-    """
-    if calibrated:
-        shap_values_list = []
-        shap_expected_list = []
-        for calibrated_classifier in tqdm(model.calibrated_classifiers_):
-            explainer = shap.TreeExplainer(calibrated_classifier.base_estimator)
-            shap_values = explainer.shap_values(x_test)[1]
-            shap_expected_value = explainer.expected_value[1]
-            shap_values_list.append(shap_values)
-            shap_expected_list.append(shap_expected_value)
-        shap_values = np.array(shap_values_list).sum(axis=0) / len(shap_values_list)
-        shap_expected_value = mean(shap_expected_list)
-        shap_df = pd.DataFrame(shap_values, columns=list(x_test))
-        shap_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_values.csv'), index=False)
-        shap_expected_value = pd.DataFrame({'expected_value': [shap_expected_value]})
-        shap_expected_value.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_expected.csv'),
-                                   index=False)
-    else:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(x_test)[1]
-        shap_df = pd.DataFrame(shap_values, columns=list(x_test))
-        shap_df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_values.csv'), index=False)
-        shap_expected_value = pd.DataFrame({'expected_value': [explainer.expected_value[1]]})
-        shap_expected_value.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_expected.csv'),
-                                   index=False)
-    return shap_values
-
-
-def _generate_shap_global_values(shap_values, x_test, model_name):
-    """
-    Extracts the global shape values for every feature ans saves the outcome as a dataframe locally. Amends the
-    dataframe so that it could be used in log_feature_importance_to_mysql().
-
-    :param shap_values: numpy array of shap values
-    :param x_test: x_test dataframe
+    :param y_test: y_test series
+    :param probability_predictions: dataframe of probability predictions, with the first column being the negative
+    class predictions and the second column being the positive class predictions
     :param model_name: string name of the model
-    :returns: pandas dataframe
     """
-    shap_values = np.abs(shap_values).mean(0)
-    df = pd.DataFrame(list(zip(x_test.columns, shap_values)), columns=['feature', 'shap_value'])
-    df.sort_values(by=['shap_value'], ascending=False, inplace=True)
-    df.to_csv(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_global.csv'), index=False)
-    df.rename(columns={'shap_value': 'importance_score'}, inplace=True)
-    df['model_uid'] = model_name
-    df['importance_metric'] = 'shap'
-    return df
-
-
-def _generate_shap_plot(shap_values, x_test, model_name, plot_type):
-    """
-    Generates a plot of shap values and saves it locally.
-
-    :param shap_values: numpy array of shap values produced for x_test
-    :param x_test: x_test dataframe
-    :param model_name: string name of the model
-    :param plot_type: the type of plot we want to generate; generally, either dot or bar
-    """
-    shap.summary_plot(shap_values, x_test, plot_type=plot_type, show=False)
-    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'{model_name}_shap_values_{plot_type}.png'),
-                bbox_inches='tight')
+    skplt.metrics.plot_cumulative_gain(y_test, probability_predictions)
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'cumulative_gains_plot.png'))
     plt.clf()
 
 
-def _prepare_data_for_shap(pipeline, x_test, n_obs=10_000):
+def plot_lift_curve_chart(y_test, probability_predictions, model_name):
     """
-    Prepares the model and x_test dataframe for extracting SHAP values. This involves applying the preprocessing steps
-    in the pipeline and converting the output into a dataframe with the appropriate columns. Likewise, this process
-    involves plucking out the model, as the SHAP functions only take models and not pipelines.
+    Produces a lif curve and saves it locally.
 
-    :param pipeline: scikit-learn pipeline with preprocessing steps and model
-    :param x_test: x_test dataframe
-    :param n_obs: the number of observations to keep in x_test because calculating SHAP values can be quite
-    computationally expensive; default is 10,000. If n_obs is greater than the total number of observations, then
-    50% of the data will be sampled.
-    :returns: model with predict method, transformed x_test dataframe
+    :param y_test: y_test series
+    :param probability_predictions: dataframe of probability predictions, with the first column being the negative
+    class predictions and the second column being the positive class predictions
+    :param model_name: string name of the model
     """
-    # Extract the names of the features from the dict vectorizers
-    num_dict_vect = pipeline.named_steps['preprocessor'].named_transformers_.get('numeric_transformer').named_steps[
-        'dict_vectorizer']
-    cat_dict_vect = pipeline.named_steps['preprocessor'].named_transformers_.get('categorical_transformer').named_steps[
-        'dict_vectorizer']
-    num_features = num_dict_vect.feature_names_
-    cat_features = cat_dict_vect.feature_names_
-
-    # Get the boolean masks for the variance threshold and feature selector steps
-    variance_threshold_support = pipeline.named_steps['variance_thresholder'].get_support()
-    feature_selector_support = pipeline.named_steps['feature_selector'].get_support()
-
-    # Create a dataframe of column names
-    cols_df = pd.DataFrame({'cols': num_features + cat_features,
-                            'variance_threshold_support': variance_threshold_support})
-    cols = cols_df['cols'].tolist()
-
-    # Isolate the model in the pipeline
-    model = pipeline.named_steps['model']
-
-    # Remove the model
-    pipeline.steps.pop(len(pipeline) - 1)
-
-    # Remove the feature selector
-    pipeline.steps.pop(len(pipeline) - 1)
-
-    # Remove the variance threshold
-    pipeline.steps.pop(len(pipeline) - 1)
-
-    # Transform the data using the remaining pipeline steps, cast to a dataframe, and assign the column names
-    x_test = pipeline.transform(x_test)
-    x_test = pd.DataFrame(x_test)
-    x_test.columns = cols
-
-    # Remove the columns taken out by the variance threshold
-    remove_df = deepcopy(cols_df)
-    remove_df = remove_df.loc[remove_df['variance_threshold_support'] == False]
-    remove_cols = remove_df['cols'].tolist()
-    x_test.drop(remove_cols, 1, inplace=True)
-
-    # Create a dataframe for the feature selector step
-    cols_df = cols_df.loc[cols_df['variance_threshold_support'] == True]
-    cols_df.reset_index(inplace=True, drop=True)
-    feature_selector_df = pd.DataFrame({'feature_selector_support': feature_selector_support})
-    cols_df = pd.concat([cols_df, feature_selector_df], axis=1)
-
-    # Remove the columns taken out by the variance threshold
-    remove_df = cols_df.loc[cols_df['feature_selector_support'] == False]
-    remove_cols = remove_df['cols'].tolist()
-    x_test.drop(remove_cols, 1, inplace=True)
-
-    try:
-        x_test = x_test.sample(n=n_obs)
-    except ValueError:
-        x_test = x_test.sample(frac=0.5)
-
-    return model, x_test
+    skplt.metrics.plot_lift_curve(y_test, probability_predictions)
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'lift_curve.png'))
+    plt.clf()
 
 
-def produce_shap_values(model, x_test, model_name, calibrated=False):
+def _assemble_negative_and_positive_pairs(y_test, probability_predictions, subset_percentage=0.1):
     """
-    Produces SHAP values for x_test and writes associated diagnostics locally.
+    Finds the combination of every predicted probability in the negative class and every predicted probability in the
+    positive class.
 
-    :param model: model with predict method
+    :param y_test: y_test series
+    :param probability_predictions: positive probability predictions series
+    :param subset_percentage: percentage of observations to keep, as finding all the the combinations of positive and
+    negative can result in a combinatorial explosion; default is 0.1
+    :returns: list
+    """
+    df = pd.concat([y_test, probability_predictions], axis=1)
+    df = df.sample(frac=subset_percentage)
+    columns = list(df)
+    true_label = columns[0]
+    predicted_prob = columns[1]
+    neg_df = df.loc[df[true_label] == 0]
+    neg_probs = neg_df[predicted_prob].tolist()
+    pos_df = df.loc[df[true_label] == 1]
+    pos_probs = pos_df[predicted_prob].tolist()
+    return list(itertools.product(neg_probs, pos_probs))
+
+
+def _find_discordants(pairs):
+    """
+    Finds the number of discordants, defined as the number of cases where predicted probability in\\of the negative
+    class observation is greater than the predicted probability of the positive class observation.
+
+    :param pairs: tuple where the first element is the negative probability and the second element is the positive
+    probability
+    :returns: integer
+    """
+    discordants = 0
+    if pairs[0] >= pairs[1]:
+        discordants += 1
+    return discordants
+
+
+def find_concordant_discordant_ratio_and_somers_d(y_test, probability_predictions, model_name):
+    """
+    Finds the concordant-discordant ratiio and Somer's D and saved them locally
+
+    :param y_test: y_test series
+    :param probability_predictions: positive probability predictions series
+    :param model_name: string name of the model
+    """
+    pairs = _assemble_negative_and_positive_pairs(y_test, probability_predictions)
+    pool = mp.Pool(processes=mp.cpu_count())
+    result = pool.map(_find_discordants, pairs)
+    pairs = len(result)
+    discordant_pairs = sum(result)
+    concordant_discordant_ratio = 1 - (discordant_pairs / pairs)
+    concordant_pairs = pairs - discordant_pairs
+    somers_d = (concordant_pairs - discordant_pairs) / pairs
+    pd.DataFrame({'concordant_discordant_ratio': [concordant_discordant_ratio], 'somers_d': [somers_d]}).to_csv(
+        os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'concordant_discordant.csv'))
+
+
+def run_mcnemar_test(y_test, model_1_class_predictions, model_2_class_predictions, model_1_name, model_2_name):
+    """
+    Runs the McNemar test to determine if there is a statistically significant difference in the class predictions.
+    Writes the results and associated contingency table locally.
+
+    :param y_test: y_test series
+    :param model_1_class_predictions: class predictions from model 1
+    :param model_2_class_predictions: class predictions from model 2
+    :param model_1_name: name of the first model
+    :param model_2_name: name of the second model
+    """
+    results_table = mcnemar_table(y_target=y_test, y_model1=model_1_class_predictions,
+                                  y_model2=model_2_class_predictions)
+    chi2, p = mcnemar(ary=results_table, corrected=True)
+    pd.DataFrame({'chi2': [chi2], 'p': [p]}).to_csv(os.path.join(f'{model_1_name}_{model_2_name}_mcnemar_test.csv'))
+    board = checkerboard_plot(results_table,
+                              figsize=(6, 6),
+                              fmt='%d',
+                              col_labels=[f'{model_2_name} wrong', f'{model_2_name} right'],
+                              row_labels=[f'{model_1_name} wrong', f'{model_1_name} right'])
+    plt.tight_layout()
+    plt.savefig(os.path.join(f'{model_1_name}_{model_2_name}_mcnemar_test.png'))
+    plt.clf()
+
+
+def run_cochran_q_test(y_test, *model_predictions, output_name):
+    """
+    Runs Cochran's Q test to determine if there is a statistically significant difference in more than two models' class
+    predictions. The function can support up to five sets of predictions. Results are saved locally.
+
+    :param y_test: y_test series
+    :param model_predictions: arbitrary number of model predictions
+    :param output_name: name to append to file to identify models used in the test
+    """
+    n_models = len(model_predictions)
+    if n_models == 3:
+        chi2, p = cochrans_q(y_test.values, model_predictions[0].values, model_predictions[1].values,
+                             model_predictions[2].values)
+    elif n_models == 4:
+        chi2, p = cochrans_q(y_test.values, model_predictions[0].values, model_predictions[1].values,
+                             model_predictions[2].values, model_predictions[3].values)
+    elif n_models == 5:
+        chi2, p = cochrans_q(y_test.values, model_predictions[0].values, model_predictions[1].values,
+                             model_predictions[2].values, model_predictions[3].values, model_predictions[4].values)
+    else:
+        raise Exception('function cannot support more than five sets of predictions')
+    pd.DataFrame({'chi2': [chi2], 'p': [p]}).to_csv(os.path.join(f'{output_name}_cochrans_q_test.csv'))
+
+
+def produce_ks_statistic(y_test, probability_predictions, model_name):
+    """
+    Calculates the K-S statistic and saves the results locally.
+
+    :param y_test: y_test series
+    :param probability_predictions: dataframe of probability predictions, with the first column being the negative
+    class predictions and the second column being the positive class predictions
+    :param model_name: string name of the model
+    """
+    df = pd.concat([y_test, probability_predictions], axis=1)
+    columns = list(df)
+    true_label = columns[0]
+    pos_predicted_prob = columns[1]
+    pos_df = df.loc[df[true_label] == 1]
+    neg_df = df.loc[df[true_label] == 0]
+    result = ks_2samp(pos_df[pos_predicted_prob], neg_df[pos_predicted_prob])
+    pd.DataFrame({'ks_statistic': [result[0]], 'p_value': [result[1]]}).to_csv(
+        os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'ks_statistics.csv'), index=False)
+    skplt.metrics.plot_ks_statistic(y_test, probability_predictions)
+    plt.savefig(os.path.join(model_name, DIAGNOSTICS_DIRECTORY, 'ks_statistic.png'))
+    plt.clf()
+
+
+def perform_bias_variance_decomposition(model, x_train, y_train, x_test, y_test, model_name, n_boostraps=20):
+    """
+    Decomposes the average loss of a model into bias and variance. Writes out the results locally.
+
+    :param model: trained model
+    :param x_train: x_train
+    :param y_train: y_train
     :param x_test: x_test
-    :param model_name: name of the model
-    :param calibrated: boolean of whether or not the model is a CalibratedClassifierCV; the default is False
+    :param y_test: y_test
+    :param n_boostraps: number of bootstrap samples to take
+    :param model_name: string name of the model
     """
-    shap_values = _produce_raw_shap_values(model, model_name, x_test, calibrated)
-    global_shap_df = _generate_shap_global_values(shap_values, x_test, model_name)
-    log_feature_importance_to_mysql(global_shap_df, SCHEMA_NAME)
-    _generate_shap_plot(shap_values, x_test, model_name, 'dot')
-    _generate_shap_plot(shap_values, x_test, model_name, 'bar')
+    x_train = x_train.reset_index(drop=True)
+    y_train = y_train.reset_index(drop=True)
+    x_test = x_test.reset_index(drop=True)
+    y_test = y_test.reset_index(drop=True)
+    avg_expected_loss, avg_bias, avg_var = bias_variance_decomp(model, x_train, y_train, x_test, y_test,
+                                                                loss='0-1_loss', random_seed=1234,
+                                                                num_rounds=n_boostraps)
+    pd.DataFrame({'avg_expected_loss': [avg_expected_loss], 'avg_bias': [avg_bias], 'avg_var': [avg_var]}).to_csv(
+        os.path.join(model_name, DIAGNOSTICS_DIRECTORY, f'bias_variance_decomposition.csv'))
 
 
 def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cutoff, target, evaluation_list,
-                                 calibration_bins, calibrated=False):
+                                 calibration_bins):
     """
     Runs a series of functions to evaluate a model's performance.
 
@@ -418,16 +456,27 @@ def run_omnibus_model_evaluation(pipeline, model_name, x_test, y_test, class_cut
     :param evaluation_list: list of tuples, which each tuple having the ordering of: the column with the predictions,
     the scoring function callable, and the name of the metric
     :param calibration_bins: number of bins in the calibration plot
-    :param calibrated: boolean of whether or not the pipeline has a CalibratedClassifierCV; default is False
     """
     print(f'evaluating {model_name}...')
     predictions_df = produce_predictions(pipeline, model_name, x_test, y_test, class_cutoff)
     run_evaluation_metrics(predictions_df, target, model_name, evaluation_list)
-    plot_calibration_curve(y_test, predictions_df['1_prob'], calibration_bins, 'uniform', model_name)
-    plot_calibration_curve(y_test, predictions_df['1_prob'], calibration_bins, 'quantile', model_name)
-    model, x_test = _prepare_data_for_shap(pipeline, x_test)
-    try:
-        produce_shap_values(model, x_test, model_name, calibrated=calibrated)
-    except Exception as e:
-        print(e)
-        print(f'unable to run shap values for {model_name}')
+
+    for metric in evaluation_list:
+        get_bootstrap_estimate(y_test, predictions_df[metric[0]], metric[1], metric[2], model_name, samples=30)
+
+    for n_bin in calibration_bins:
+        plot_calibration_curve(y_test, predictions_df['1_prob'], n_bin, 'uniform', model_name)
+        plot_calibration_curve(y_test, predictions_df['1_prob'], n_bin, 'quantile', model_name)
+
+    optimal_threshold = find_optimal_class_cutoff(y_test, predictions_df['1_prob'], model_name)
+    predictions_df['optimal_predicted_class'] = np.where(predictions_df['1_prob'] >= optimal_threshold, 1, 0)
+    for predicted_class in ['predicted_class', 'optimal_predicted_class']:
+        plot_confusion_matrix(y_test, predictions_df[predicted_class], model_name)
+
+    produce_roc_curve_plot(pipeline, x_test, y_test, model_name)
+    calculate_class_lift(y_test, predictions_df['predicted_class'], model_name)
+    calculate_probability_lift(y_test, predictions_df['1_prob'], model_name)
+    plot_cumulative_gains_chart(y_test, predictions_df[['0_prob', '1_prob']], model_name)
+    plot_lift_curve_chart(y_test, predictions_df[['0_prob', '1_prob']], model_name)
+    produce_ks_statistic(y_test, predictions_df[['0_prob', '1_prob']], model_name)
+    find_concordant_discordant_ratio_and_somers_d(y_test, predictions_df['1_prob'], model_name)

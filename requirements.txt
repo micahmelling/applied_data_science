@@ -9,11 +9,11 @@ matplotlib==3.2.0
 tqdm==4.46.1
 ppscore==1.1.1
 numpy==1.19.2
-mlxtend==0.17.3
+mlxtend==0.18.0
 xgboost==1.2.1
 catboost==0.24.2
 lightgbm==3.0.0
-shap==0.33.0
+shap==0.35.0
 Flask==1.1.2
 sentry-sdk[flask]==0.19.4
 streamlit==0.71.0
@@ -22,3 +22,11 @@ pytest==6.1.2
 schema==0.7.2
 flask_monitoringdashboard==3.1.0
 pytz==2020.4
+dtreeviz==1.1.4
+PyALE==1.1.0
+flask-talisman==0.7.0
+cachetools==4.2.1
+rq==1.8.0
+yagmail==0.14.247
+flask-swagger==0.2.14
+Sphinx==3.5.4

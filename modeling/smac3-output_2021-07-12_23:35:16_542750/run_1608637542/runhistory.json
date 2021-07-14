@@ -1,0 +1,116 @@
+{
+  "data": [
+    [
+      [
+        1,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2813378307724332,
+        4.096513032913208,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150920.729026,
+        1626150924.8449259,
+        {}
+      ]
+    ],
+    [
+      [
+        2,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.282793914354689,
+        5.184089183807373,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150925.55364,
+        1626150930.751105,
+        {}
+      ]
+    ],
+    [
+      [
+        3,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2803069413931634,
+        4.249717950820923,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150931.507127,
+        1626150935.773443,
+        {}
+      ]
+    ],
+    [
+      [
+        4,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2836731841858111,
+        4.031091928482056,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150936.5399911,
+        1626150940.584317,
+        {}
+      ]
+    ]
+  ],
+  "config_origins": {
+    "1": "Sobol",
+    "2": "Random Search (sorted)",
+    "3": "Random Search (sorted)",
+    "4": "Random Search (sorted)"
+  },
+  "configs": {
+    "1": {
+      "feature_selector__percentile": 50,
+      "model__max_depth": 17,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.005050000000000001,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "no",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    },
+    "2": {
+      "feature_selector__percentile": 87,
+      "model__max_depth": 31,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.004962897731139364,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "yes"
+    },
+    "3": {
+      "feature_selector__percentile": 46,
+      "model__max_depth": 24,
+      "model__max_features": "sqrt",
+      "model__min_samples_leaf": 0.00636265407545667,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    },
+    "4": {
+      "feature_selector__percentile": 56,
+      "model__max_depth": 31,
+      "model__max_features": "sqrt",
+      "model__min_samples_leaf": 0.00791121372850085,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "no",
+      "preprocessor__numeric_transformer__log_creator__take_log": "yes"
+    }
+  }
+}

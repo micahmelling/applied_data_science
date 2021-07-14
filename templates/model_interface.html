@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h1>Churn Model UI</h1>
+
+<p>Select the Client IDs for which you want to receive predictions.</p>
+
+<form action="/model_interface" method="POST">
+  <label for="clients">Client IDs:</label>
+  <input type="text" id="clients" name="clients"><br><br>
+  <br><br>
+  <input type="submit" value="Submit">
+</form>
+
+<h2>Predictions</h2>
+{{ predictions | safe }}
+
+</body>
+</html>

@@ -1,0 +1,89 @@
+{
+  "data": [
+    [
+      [
+        1,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2810047669317792,
+        6.058269023895264,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150610.292264,
+        1626150616.413314,
+        {}
+      ]
+    ],
+    [
+      [
+        2,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2830234601447061,
+        5.759120225906372,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150617.336185,
+        1626150623.147676,
+        {}
+      ]
+    ],
+    [
+      [
+        3,
+        null,
+        0,
+        0.0
+      ],
+      [
+        1.2800315318707949,
+        6.287280797958374,
+        {
+          "__enum__": "StatusType.SUCCESS"
+        },
+        1626150623.8481731,
+        1626150630.205877,
+        {}
+      ]
+    ]
+  ],
+  "config_origins": {
+    "1": "Sobol",
+    "2": "Random Search (sorted)",
+    "3": "Random Search (sorted)"
+  },
+  "configs": {
+    "1": {
+      "feature_selector__percentile": 50,
+      "model__max_depth": 17,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.005050000000000001,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "no",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    },
+    "2": {
+      "feature_selector__percentile": 87,
+      "model__max_depth": 31,
+      "model__max_features": "log2",
+      "model__min_samples_leaf": 0.004962897731139364,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "yes"
+    },
+    "3": {
+      "feature_selector__percentile": 46,
+      "model__max_depth": 24,
+      "model__max_features": "sqrt",
+      "model__min_samples_leaf": 0.00636265407545667,
+      "preprocessor__categorical_transformer__category_combiner__combine_categories": "yes",
+      "preprocessor__numeric_transformer__log_creator__take_log": "no"
+    }
+  }
+}

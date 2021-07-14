@@ -64,7 +64,9 @@ def get_pipeline(model):
         transformers=[
             ('numeric_transformer', numeric_transformer, selector(dtype_include='number')),
             ('categorical_transformer', categorical_transformer, selector(dtype_exclude='number'))
-        ])
+        ],
+        remainder='passthrough',
+    )
 
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),

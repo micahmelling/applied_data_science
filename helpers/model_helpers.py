@@ -30,6 +30,17 @@ def upload_model_directory_to_s3(model_directory):
                 aws.upload_file_to_s3(file_name=os.path.join(model_directory, sub_dir, file), bucket=S3_BUCKET)
 
 
+def find_non_dummied_columns(df):
+    cols = list(df)
+    non_dummied_cols = []
+    for col in cols:
+        unique_col_vals = list(df[col].unique())
+        unique_col_vals = [int(v) for v in unique_col_vals]
+        if set(unique_col_vals) not in [{0, 1}, {0}, {1}]:
+            non_dummied_cols.append(col)
+    return non_dummied_cols
+
+
 def make_directories_if_not_exists(directories_list):
     """
     Makes directories in the current working directory if they do not exist:

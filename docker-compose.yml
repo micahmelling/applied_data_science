@@ -1,0 +1,8 @@
+version: "3.8"
+services:
+  web:
+    build: .
+    command: ./run.sh
+  redis:
+    build: .
+    command: python data/redis_worker.py

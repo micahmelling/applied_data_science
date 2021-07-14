@@ -1,0 +1,62 @@
+{
+  "hyperparameters": [
+    {
+      "name": "feature_selector__percentile",
+      "type": "uniform_int",
+      "log": false,
+      "lower": 1,
+      "upper": 100,
+      "default": 50
+    },
+    {
+      "name": "model__max_depth",
+      "type": "uniform_int",
+      "log": false,
+      "lower": 3,
+      "upper": 31,
+      "default": 10
+    },
+    {
+      "name": "model__max_features",
+      "type": "categorical",
+      "choices": [
+        "sqrt",
+        "log2"
+      ],
+      "default": "sqrt",
+      "probabilities": null
+    },
+    {
+      "name": "model__min_samples_leaf",
+      "type": "uniform_float",
+      "log": false,
+      "lower": 0.0001,
+      "upper": 0.01,
+      "default": 0.001
+    },
+    {
+      "name": "preprocessor__categorical_transformer__category_combiner__combine_categories",
+      "type": "categorical",
+      "choices": [
+        "yes",
+        "no"
+      ],
+      "default": "yes",
+      "probabilities": null
+    },
+    {
+      "name": "preprocessor__numeric_transformer__log_creator__take_log",
+      "type": "categorical",
+      "choices": [
+        "yes",
+        "no"
+      ],
+      "default": "yes",
+      "probabilities": null
+    }
+  ],
+  "conditions": [],
+  "forbiddens": [],
+  "python_module_version": "0.4.16",
+  "json_format_version": 0.2
+}
