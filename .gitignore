@@ -15,4 +15,5 @@ venv/
 scratch.py
 scratch/
 create_ml_project_structure.sh
-
+key.pem
+cert.pem

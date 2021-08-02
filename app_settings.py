@@ -1,20 +1,24 @@
 import os
 
+from ds_helpers.aws import get_secrets_manager_secret
 
-AWS_KEYS_SECRET = 'churn-api-s3-keys'
-DATABASE_SECRET = 'churn-model-mysql'
-EMAIL_SECRET = 'churn-email'
-APP_SECRET = os.environ['CHURN_APP_SECRET']
-S3_BUCKET_NAME = 'churn-model-data-science-logs'
-SCHEMA_NAME = 'churn_model'
-STAGE_URL = 'stage_url'
-PROD_URL = 'prod_url'
-MODEL_1_PATH = os.path.join('modeling', 'extra_trees_sigmoid_202101172351171374000600', 'models', 'model.pkl')
-MODEL_2_PATH = os.path.join('modeling', 'extra_trees_sigmoid_202101172351171374000600', 'models', 'model.pkl')
-HEURISTIC_MODEL_PATH = os.path.join('modeling', 'heuristic_model_202101272206199889570600', 'models', 'model.pkl')
-MODEL_FEATURES = ['activity_score', 'propensity_score', 'profile_score_new', 'completeness_score', 'xp_points',
-                  'profile_score', 'portfolio_score', 'mouse_movement', 'average_stars', 'ad_target_group',
-                  'marketing_message', 'device_type', 'all_star_group', 'mouse_x', 'coupon_code', 'ad_engagement_group',
-                  'user_group', 'browser_type', 'email_code', 'marketing_creative', 'secondary_user_group',
-                  'promotion_category', 'marketing_campaign', 'mouse_y', 'marketing_channel', 'marketing_creative_sub',
-                  'site_level', 'acquired_date']
+
+ENVIRONMENT = os.environ['ENVIRONMENT']
+MODEL_PATH = os.path.join('modeling', 'random_forest_202107252202562870520500', 'model', 'model.pkl')
+OUTPUT_LOGS_TABLE_NAME = 'model_logs'
+DB_SCHEMA = 'churn_model'
+SENTRY_DSN = get_secrets_manager_secret('churn-sentry-dsn').get('dsn')
+FLASK_SECRET = get_secrets_manager_secret('churn-app-flask-secret').get('secret')
+OUTPUT_LOGS_S3_BUCKET_NAME = 'churn-model-data-science-logs'
+
+if ENVIRONMENT == 'local':
+    URL = '127.0.0.1:5000'
+    DATABASE_SECRET = 'stage-churn-model-svc-mysql'
+elif ENVIRONMENT == 'stage':
+    URL = 'stage-url'
+    DATABASE_SECRET = 'stage-churn-model-svc-mysql'
+elif ENVIRONMENT == 'prod':
+    URL = 'prod-url'
+    DATABASE_SECRET = 'prod-churn-model-svc-mysql'
+else:
+    raise Exception(f'ENVIRONMENT must be one of local, stage, or prod. {ENVIRONMENT} was passed.')

@@ -1,86 +1,42 @@
 import pandas as pd
 import numpy as np
-import os
-import joblib
 
 from scipy.stats import ks_2samp, chisquare
 
-from ds_helpers import aws, db
-from app_settings import MODEL_1_PATH, MODEL_FEATURES
+from ds_helpers import db
+
+from data.db import make_mysql_connection
+from modeling.config import FEATURE_DTYPE_MAPPING
+from app_settings import MODEL_PATH
+from helpers.utility_helpers import extract_model_uid_from_path, get_query_start_timestamp, extract_production_data, \
+    recreate_data_used_for_training
 
 
-def extract_model_uid_from_path(model_path):
-    return model_path.split('/')[1]
+def calculate_ks_statistic(training_series, production_series):
+    """
+    Calculates a KS Statistic between production and training data for two comparable series.
 
-
-def get_query_start_timestamp(model_uid, db_conn):
-    query = f'''
-    select training_timestamp
-    from churn_model.model_meta_data
-    where model_uid = '{model_uid}';
-    '''
-    df = pd.read_sql(query, db_conn)
-    start_timestamp = df['training_timestamp'][0]
-    return start_timestamp
-
-
-def extract_production_data(start_timestamp, model_uid, db_conn):
-    query = f'''
-    select JSON_EXTRACT(input_output_payloads, "$.input.*") as "values",
-    JSON_KEYS(input_output_payloads, "$.input") as "keys"
-    from (
-    select * from churn_model.model_logs
-    where JSON_EXTRACT(input_output_payloads, "$.output.model_used") = 'model_1'
-    and JSON_EXTRACT(input_output_payloads, "$.output.model_1_path") = '{model_uid}'
-
-    union
-
-    select * from churn_model.model_logs
-    where JSON_EXTRACT(input_output_payloads, "$.output.model_used") = 'model_2'
-    and JSON_EXTRACT(input_output_payloads, "$.output.model_2_path") = '{model_uid}'
-
-    ) model_output
-    where logging_timestamp >= '{start_timestamp}';'''
-    df = pd.read_sql(query, db_conn)
-    columns = df['keys'][0]
-    columns = columns.strip('][').split(', ')
-    columns = [c.replace('"', '') for c in columns]
-    df.drop('keys', 1, inplace=True)
-    df['values'] = df['values'].str.replace('[', '').str.replace(']', '')
-    df = df['values'].str.split(',', expand=True)
-    df.columns = columns
-    df.drop(['uid', 'url', 'endpoint'], 1, inplace=True)
-    for col in list(df):
-        df[col] = df[col].str.replace('"', '')
-        df[col] = df[col].str.strip()
-        try:
-            df[col] = df[col].astype(float)
-        except ValueError:
-            pass
-    return df
-
-
-def recreate_data_used_for_training(model_uid):
-    path = os.path.join(model_uid, 'data')
-    aws.download_folder_from_s3('churn-model-data-science-modeling', path)
-    x_train = joblib.load(os.path.join(path, 'x_train.pkl'))
-    x_train.reset_index(inplace=True, drop=True)
-    x_test = joblib.load(os.path.join(path, 'x_test.pkl'))
-    x_test.reset_index(inplace=True, drop=True)
-    x_df = pd.concat([x_train, x_test], axis=0)
-    x_df = x_df[MODEL_FEATURES]
-    return x_df
-
-
-def calculate_ks_statistic(training_df, production_df, feature):
+    :param training_series: series of training data
+    :param production_series: series of production data
+    :returns: float
+    """
     try:
-        ks_result = ks_2samp(training_df[feature], production_df[feature])
+        ks_result = ks_2samp(training_series, production_series)
         return ks_result[1]
     except KeyError:
         return 0.00
 
 
 def prep_category_for_chi_squared(training_df, production_df, feature):
+    """
+    Prepares a categorical feature for calculating a chi-squared statistic. Basically, it normalizes the sample sizes
+    to be comparable.
+
+    :param training_df: dataframe of training data
+    :param production_df: dataframe of production data
+    :param feature: categorical feature
+    :returns: pandas dataframe
+    """
     try:
         training_feature_grouped = pd.DataFrame(training_df.groupby(feature)[feature].count())
         training_feature_grouped.columns = ['train_count']
@@ -109,17 +65,31 @@ def prep_category_for_chi_squared(training_df, production_df, feature):
 
 
 def calculate_chi_squared_statistic(training_series, production_series):
+    """
+    Calculates a chi-squared statistic and p-value.
+
+    :param training_series: series of training data
+    :param production_series: series of production data
+    :returns: p-value
+    """
     chi_result = chisquare(f_obs=production_series, f_exp=training_series)
     return chi_result[1]
 
 
-def main(model_path, db_secret_name, p_value_cutoff):
-    db_conn = db.connect_to_mysql(aws.get_secrets_manager_secret(db_secret_name),
-                                  ssl_path=os.path.join('data', 'rds-ca-2019-root.pem'))
+def main(model_path, db_secret_name, p_value_cutoff, model_features):
+    """
+    Determines if concept shift has occurred.
+
+    :param model_path: path to the model
+    :param db_secret_name: Secrets Manager secret with DB credentials
+    :param p_value_cutoff: p-value for chi-squared calculation
+    :param model_features: features used for modeling
+    """
+    db_conn = make_mysql_connection(db_secret_name)
     model_uid = extract_model_uid_from_path(model_path)
     query_start_time = get_query_start_timestamp(model_uid, db_conn)
-    production_df = extract_production_data(query_start_time, MODEL_1_PATH, db_conn)
-    original_training_df = recreate_data_used_for_training(model_uid)
+    production_df = extract_production_data(query_start_time, model_uid, db_conn)
+    original_training_df = recreate_data_used_for_training(model_uid, model_features)
 
     cat_production_df = production_df.select_dtypes(include='object')
     num_production_df = production_df.select_dtypes(exclude='object')
@@ -138,7 +108,7 @@ def main(model_path, db_secret_name, p_value_cutoff):
         main_drift_df = main_drift_df.append(temp_drift_df)
 
     for num_col in num_columns:
-        p_value = calculate_ks_statistic(num_training_df, num_production_df, num_col)
+        p_value = calculate_ks_statistic(num_training_df[num_col], num_production_df[num_col])
         temp_drift_df = pd.DataFrame({'feature': [num_col], 'p_value': [p_value]})
         main_drift_df = main_drift_df.append(temp_drift_df)
 
@@ -148,4 +118,9 @@ def main(model_path, db_secret_name, p_value_cutoff):
 
 
 if __name__ == "__main__":
-    main(model_path=MODEL_1_PATH, db_secret_name='churn-model-mysql', p_value_cutoff=0.05)
+    main(
+        model_path=MODEL_PATH,
+        db_secret_name='churn-model-mysql',
+        p_value_cutoff=0.05,
+        model_features=list(FEATURE_DTYPE_MAPPING.keys())
+    )

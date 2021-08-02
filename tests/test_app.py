@@ -3,7 +3,7 @@ import pandas as pd
 import json
 
 from app import app
-from helpers.app_helpers import convert_json_to_dataframe, ensure_json_matches_training_data
+from helpers.app_helpers import convert_json_to_dataframe
 from app_settings import MODEL_FEATURES
 
 
@@ -44,11 +44,6 @@ def test_valid_env():
 def test_convert_dataframe_to_json(simple_json):
     df = convert_json_to_dataframe(simple_json)
     assert 'key' in df.columns
-
-
-def test_ensure_json_matches_training_data(client, payload_1):
-    json_object = ensure_json_matches_training_data(payload_1, MODEL_FEATURES)
-    assert list(json_object.keys()) == MODEL_FEATURES
 
 
 def test_app_responds(client):

@@ -2,7 +2,21 @@ version: "3.8"
 services:
   web:
     build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=$ENVIRONMENT
+      - AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+      - AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
     command: ./run.sh
-  redis:
+  worker:
     build: .
-    command: python data/redis_worker.py
+    ports:
+      - "6379:8000"
+    environment:
+      - ENVIRONMENT=$ENVIRONMENT
+      - AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+      - AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    command: python redis_worker.py
+  redis:
+    image: "redis:alpine"

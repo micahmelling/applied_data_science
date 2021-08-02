@@ -16,26 +16,29 @@ from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.metrics import  silhouette_score
+from sklearn.metrics import silhouette_score
 from mlxtend.frequent_patterns import fpgrowth, association_rules
-from ds_helpers.db import connect_to_mysql
-from ds_helpers.aws import get_secrets_manager_secret
+
+from data.db import make_mysql_connection
 
 
 warnings.filterwarnings('ignore')
 
-IMAGES_PATH = 'output_images'
-FILES_PATH = 'output_files'
+
+def create_exploration_directories(images_path, files_path):
+    """
+    Creates images_path and files_path to store exploration output:
+
+    :param images_path: path in which to store images
+    :param files_path: path in which to store files
+    """
+    if not os.path.exists(images_path):
+        os.makedirs(images_path)
+    if not os.path.exists(files_path):
+        os.makedirs(files_path)
 
 
-def create_exploration_directories():
-    if not os.path.exists(IMAGES_PATH):
-        os.makedirs(IMAGES_PATH)
-    if not os.path.exists(FILES_PATH):
-        os.makedirs(FILES_PATH)
-
-
-def create_tsne_visualization(df, target, sample_size=10_000):
+def create_tsne_visualization(df, target, save_path, sample_size=10_000):
     """
     Creates a t-SNE visualization and saves it into IMAGES_PATH. The visualization will help us visualize our entire
     dataset and will highlight the data points in each class. This will allow us to see how clustered or interspersed
@@ -44,6 +47,7 @@ def create_tsne_visualization(df, target, sample_size=10_000):
     :param df: pandas dataframe
     :param target: name of the target
     :param sample_size: number of observations to sample since t-SNE is computationally expensive; default is 10_000
+    :param save_path: path in which to save the output
     """
     print('creating tsne visualization...')
     df = df.sample(n=sample_size)
@@ -70,7 +74,7 @@ def create_tsne_visualization(df, target, sample_size=10_000):
         alpha=0.3
     )
     plt.title('TSNE Plot')
-    plt.savefig(os.path.join(IMAGES_PATH, 'tsne.png'))
+    plt.savefig(os.path.join(save_path, 'tsne.png'))
     plt.clf()
 
 
@@ -96,7 +100,7 @@ def analyze_categorical_feature_dispersion(df, feature, fill_na_value='unknown')
     return grouped_df
 
 
-def make_density_plot_by_binary_target(df, feature, target):
+def make_density_plot_by_binary_target(df, feature, target, save_path):
     """
     Creates an overlayed density plot. One density plot for the feature is plotted for the first target level. Then a
     second density plot for the feature is plotted for the second target level. The plot is saved to IMAGES_PATH.
@@ -105,6 +109,7 @@ def make_density_plot_by_binary_target(df, feature, target):
     :param df: pandas dataframe
     :param feature: name of the feature to plot
     :param target: name of the target
+    :param save_path: path in which to save the output
     """
     target_levels = list(df[target].unique())
     target_df = df[[target]]
@@ -122,16 +127,16 @@ def make_density_plot_by_binary_target(df, feature, target):
     p1 = sns.kdeplot(df_level1[target_levels[1]], shade=True, color='b', legend=True)
     plt.xlabel(feature)
     plt.ylabel('density')
-    plt.savefig(os.path.join(IMAGES_PATH, 'density_plot_by_target_for_' + feature + '.png'))
+    plt.savefig(os.path.join(save_path, f'density_plot_by_target_for_{feature}.png'))
     plt.clf()
 
 
-def _calculate_binary_target_balance(df, target):
+def calculate_binary_target_balance(df, target):
     """
     Calculates the target class balances.
 
     :param df: pandas dataframe
-    :param: target: name of the target
+    :param target: name of the target
     :returns: tuple containing the target level names and their respective percentage of total observations. the tuple
     contains two items, each a list. in each list, the first item is the class name and the second item is the
     percentage of observations
@@ -186,13 +191,14 @@ def analyze_category_by_binary_target(df, feature, target, target_balance_tuple,
     return grouped_df
 
 
-def plot_category_level_counts_and_target_connection(connection_df, dispersion_df):
+def plot_category_level_counts_and_target_connection(connection_df, dispersion_df, save_path):
     """
     Plots the difference between the actual and expected percentages of the positive class (diff_from_expectation)
     along with the percentage of observations for each category level (percentage_of_category_level).
 
     :param connection_df: dataframe produced by analyze_categorical_feature_dispersion
     :param dispersion_df: dataframe produced by analyze_category_by_binary_target
+    :param save_path: path in which to save the output
     """
     merged_df = pd.merge(dispersion_df, connection_df, how='left', on='feature')
     merged_df.fillna(value=0, inplace=True)
@@ -207,16 +213,17 @@ def plot_category_level_counts_and_target_connection(connection_df, dispersion_d
         plt.xticks(rotation=90)
         plt.legend(loc='upper right')
         plt.tight_layout()
-        plt.savefig(os.path.join(IMAGES_PATH, 'category_connection_summary_for_' + category + '.png'))
+        plt.savefig(os.path.join(save_path, f'category_connection_summary_for_{category}.png'))
         plt.clf()
 
 
-def generate_summary_statistics(df, target):
+def generate_summary_statistics(df, target, save_path):
     """
     Calculates summary statistics for each target level and writes the results into FILES_PATH.
 
     :param df: pandas dataframe
     :param target: name of the target
+    :param save_path: path in which to save the output
     """
     total_df = df.describe(include='all')
     total_df['level'] = 'total'
@@ -225,16 +232,17 @@ def generate_summary_statistics(df, target):
         temp_df = temp_df.describe(include='all')
         temp_df['level'] = level
         total_df = total_df.append(temp_df)
-    total_df.to_csv(os.path.join(FILES_PATH, 'summary_statistics.csv'), index=True)
+    total_df.to_csv(os.path.join(save_path, 'summary_statistics.csv'), index=True)
 
 
-def find_highly_correlated_features(df, correlation_cutoff=0.98):
+def find_highly_correlated_features(df, save_path, correlation_cutoff=0.98):
     """
     Finds the correlation among all features in a dataset and flags those that are highly correlated. Output is saved
     into FILES_PATH. This will produce some false positives for dummy-coded features.
 
     :param df: pandas dataframe
     :param correlation_cutoff: cutoff for how high a correlation must be to be flagged; default is 0.98
+    :param save_path: path in which to save the output
     """
     df = pd.get_dummies(df, dummy_na=True)
     df = pd.DataFrame(df.corr().abs().unstack())
@@ -250,15 +258,16 @@ def find_highly_correlated_features(df, correlation_cutoff=0.98):
     df = df.loc[df['duplication'] == 'no']
     df.drop(['duplication', 'lag_feature1', 'lag_feature2'], 1, inplace=True)
     df['high_correlation'] = np.where(df['correlation'] >= correlation_cutoff, 'yes', 'no')
-    df.to_csv(os.path.join(FILES_PATH, 'feature_correlation.csv'), index=False)
+    df.to_csv(os.path.join(save_path, 'feature_correlation.csv'), index=False)
 
 
-def score_features_using_mutual_information(df, target):
+def score_features_using_mutual_information(df, target, save_path):
     """
-    Scores univariate features using mutual information. Saves the output into FILES_PATH.
+    Scores univariate features using mutual information. Saves the output locally.
 
     :param df: pandas dataframe
     :param target: name of the target
+    :param save_path: path in which to save the output
     """
     print('scoring features using mutual information...')
     y = df[target]
@@ -284,10 +293,10 @@ def score_features_using_mutual_information(df, target):
     feature_scores = pd.concat([numeric_scores, categorical_scores])
     feature_scores.reset_index(inplace=True, drop=True)
     feature_scores.sort_values(by='score', ascending=False, inplace=True)
-    feature_scores.to_csv(os.path.join(FILES_PATH, 'univariate_features_mi.csv'), index=False)
+    feature_scores.to_csv(os.path.join(save_path, 'univariate_features_mutual_information.csv'), index=False)
 
 
-def run_predictive_power_score(df, target):
+def run_predictive_power_score(df, target, save_path):
     """
     Calculates the predictive power score (pps) for each feature. If the score is 0, then it is not any better than a
     baseline model. If it's 1, then the feature is a perfect predictor. The model_score is the weighted F1 score for
@@ -295,6 +304,7 @@ def run_predictive_power_score(df, target):
 
     :param df: pandas dataframe
     :param target: name of our target
+    :param save_path: path in which to save the output
     """
     df = pd.get_dummies(df, dummy_na=True)
     df[target] = df[target].astype(str)
@@ -306,7 +316,7 @@ def run_predictive_power_score(df, target):
             temp_model_score = temp_score_dict.get('model_score')
             temp_df = pd.DataFrame({'feature': [feature], 'pps': [temp_ppscore], 'model_score': [temp_model_score]})
             pps_df = pps_df.append(temp_df)
-    pps_df.to_csv(os.path.join(FILES_PATH, 'pps.csv'), index=False)
+    pps_df.to_csv(os.path.join(save_path, 'predictive_power_score.csv'), index=False)
 
 
 def run_kmeans_clustering(df, drop_list, max_clusters, fill_na_value=0, samples=25_000):
@@ -340,12 +350,13 @@ def run_kmeans_clustering(df, drop_list, max_clusters, fill_na_value=0, samples=
     return append_df
 
 
-def get_cluster_summary(df, cluster_column_name):
+def get_cluster_summary(df, cluster_column_name, save_path):
     """
-    Produces a summary of the cluster results and saves it into FILES_PATH
+    Produces a summary of the cluster results and saves it locally.
 
     :param df: pandas dataframe produced by run_kmeans_clustering()
     :param cluster_column_name: name of the column that identifies the cluster label
+    :param save_path: path in which to save the output
     """
     mean_df = df.groupby(cluster_column_name).mean().reset_index()
     sum_df = df.groupby(cluster_column_name).sum().reset_index()
@@ -358,10 +369,10 @@ def get_cluster_summary(df, cluster_column_name):
     count_df.rename(columns={'value': 'count'}, inplace=True)
     summary_df = pd.merge(mean_df, sum_df, how='inner', on=['cluster', 'variable'])
     summary_df = pd.merge(summary_df, count_df, how='inner', on=['cluster', 'variable'])
-    summary_df.to_csv(os.path.join(FILES_PATH, 'cluster_summary.csv'), index=False)
+    summary_df.to_csv(os.path.join(save_path, 'cluster_summary.csv'), index=False)
 
 
-def run_association_rules(df, drop_list, min_support, lift_threshold):
+def run_association_rules(df, drop_list, min_support, lift_threshold, save_path):
     """
     Runs association rules mining on the provided data.
 
@@ -369,6 +380,7 @@ def run_association_rules(df, drop_list, min_support, lift_threshold):
     :param drop_list: list of features we want to exclude
     :param min_support: the minimum support necessary
     :param lift_threshold: the minimum lift necessary
+    :param save_path: path in which to save the output
     :returns: tuple including the 1) pandas dataframe of the association rules meeting min_support and lift_threshold,
     2) pandas dataframe of the transformed df that was used to run association rules mining
     """
@@ -388,19 +400,19 @@ def run_association_rules(df, drop_list, min_support, lift_threshold):
     frequent_itemsets = fpgrowth(assoc_df, min_support=min_support, use_colnames=True)
     rules_df = association_rules(frequent_itemsets, metric='lift', min_threshold=lift_threshold)
     rules_df.sort_values(by='lift', ascending=False, inplace=True)
-    rules_df.to_csv(os.path.join(FILES_PATH, 'association_rules.csv'), index=False)
+    rules_df.to_csv(os.path.join(save_path, 'association_rules.csv'), index=False)
     assoc_df = pd.concat([assoc_df, drop_df], axis=1)
     return rules_df, assoc_df
 
 
-def get_association_rules_summary(rules_df, assoc_df, interest_column):
+def get_association_rules_summary(rules_df, assoc_df, interest_column, save_path):
     """
-    Summarizes the association rules mining results by the interest_column, which will often be the TARGET. Saves the
-    output into FILES_PATH.
+    Summarizes the association rules mining results by the interest_column, which will often be the target.
 
     :param rules_df: rules_df returned by run_association_rules()
     :param assoc_df: assoc_df returned by run_association_rules()
     :param interest_column: the column we want to summarize by rule
+    :param save_path: path in which to save the output
     """
     rules_df['antecedents'] = rules_df['antecedents'].astype(str) + ','
     rules_df['all_rules'] = rules_df['antecedents'] + ' ' + rules_df['consequents'].astype(str)
@@ -422,49 +434,101 @@ def get_association_rules_summary(rules_df, assoc_df, interest_column):
         })
         summary_df = summary_df.append(temp_summary_df)
     summary_df.sort_values(by=['outcome'], ascending=False, inplace=True)
-    summary_df.to_csv(os.path.join(FILES_PATH, 'association_rules_summary.csv'), index=False)
+    summary_df.to_csv(os.path.join(save_path, 'association_rules_summary.csv'), index=False)
 
 
-def main():
-    start_time = time.time()
-    create_exploration_directories()
-    mysql_creds = get_secrets_manager_secret('churn-model-mysql')
-    churn_df = pd.read_sql('''select * from churn_model.churn_data;''',
-                           connect_to_mysql(mysql_creds, ssl_path='../data/rds-ca-2019-root.pem'))
-    churn_df['churn'] = np.where(churn_df['churn'].str.startswith('y'), 1, 0)
-    churn_df.drop(['id', 'meta__inserted_at', 'client_id', 'acquired_date'], 1, inplace=True)
+def get_data_to_explore():
+    """
+    Tightly-coupled function to retrieve the data we want to explore.
+    """
+    df = pd.read_sql('''select * from churn_model.churn_data;''', make_mysql_connection('churn-model-mysql'))
+    df['churn'] = np.where(df['churn'].str.startswith('y'), 1, 0)
+    df.drop(['id', 'meta__inserted_at', 'client_id', 'acquired_date'], 1, inplace=True)
+    return df
 
-    create_tsne_visualization(churn_df, 'churn')
-    generate_summary_statistics(churn_df, 'churn')
-    find_highly_correlated_features(churn_df)
-    score_features_using_mutual_information(churn_df, 'churn')
-    run_predictive_power_score(churn_df, 'churn')
 
-    cluster_df = run_kmeans_clustering(churn_df, ['churn'], 7)
-    get_cluster_summary(cluster_df, 'cluster')
-    assoc_rules_df, raw_assoc_df = run_association_rules(churn_df, ['churn'], 0.1, 2)
-    get_association_rules_summary(assoc_rules_df, raw_assoc_df, 'churn')
+def run_exploration(df, target, files_path, images_path, max_kmeans_clusters, min_assoc_rules_support,
+                    assoc_rules_lift_threshold):
+    """
+    Runs a series of exploration functions, which include producing / finding:
+    - TSNE visualization
+    - Summary statistics
+    _ Highly correlated features
+    - Univariate feature importance
+    - K-means clustering
+    - Association rules mining
+    - Categorical dispersion
+    - Density plots by target
 
-    categorical_df = churn_df.select_dtypes(include='object')
-    numeric_df = churn_df.select_dtypes(include='number').drop(['churn'], 1)
+    :param df: dataframe to explore
+    :param target: name of the target column
+    :param files_path: path in which to save files
+    :param images_path: path in which to save images
+    :param max_kmeans_clusters: max number of clusters to consider
+    :param min_assoc_rules_support: min support needed for association rules mining
+    :param assoc_rules_lift_threshold: min lift needed for association rules mining
+    """
+    create_tsne_visualization(df, target, images_path)
+    generate_summary_statistics(df, target, files_path)
+    find_highly_correlated_features(df, files_path)
+    score_features_using_mutual_information(df, target, files_path)
+    run_predictive_power_score(df, target, files_path)
 
-    target_balance_tuple = _calculate_binary_target_balance(churn_df, 'churn')
+    cluster_df = run_kmeans_clustering(df, [target], max_kmeans_clusters)
+    get_cluster_summary(cluster_df, 'cluster', files_path)
+    assoc_rules_df, raw_assoc_df = run_association_rules(df, [target], min_assoc_rules_support,
+                                                         assoc_rules_lift_threshold, files_path)
+    get_association_rules_summary(assoc_rules_df, raw_assoc_df, target, files_path)
+
+    categorical_cols = list(df.select_dtypes(include='object'))
+    numeric_cols = list(df.select_dtypes(include='number').drop([target], 1))
+    target_balance_tuple = calculate_binary_target_balance(df, target)
     categorical_dispersion_df = pd.DataFrame()
     category_connection_df = pd.DataFrame()
-    for column in list(categorical_df):
-        temp_categorical_dispersion_df = analyze_categorical_feature_dispersion(churn_df, column)
+
+    for column in categorical_cols:
+        temp_categorical_dispersion_df = analyze_categorical_feature_dispersion(df, column)
         categorical_dispersion_df = categorical_dispersion_df.append(temp_categorical_dispersion_df)
-        temp_category_connection_df = analyze_category_by_binary_target(churn_df, column, 'churn', target_balance_tuple)
+        temp_category_connection_df = analyze_category_by_binary_target(df, column, target, target_balance_tuple)
         category_connection_df = category_connection_df.append(temp_category_connection_df)
-    categorical_dispersion_df.to_csv(os.path.join(FILES_PATH, 'categorical_dispersion.csv'), index=False)
-    category_connection_df.to_csv(os.path.join(FILES_PATH, 'categorical_connection.csv'), index=False)
-    plot_category_level_counts_and_target_connection(category_connection_df, categorical_dispersion_df)
+    categorical_dispersion_df.to_csv(os.path.join(files_path, 'categorical_dispersion.csv'), index=False)
+    category_connection_df.to_csv(os.path.join(files_path, 'categorical_connection.csv'), index=False)
+    plot_category_level_counts_and_target_connection(category_connection_df, categorical_dispersion_df, images_path)
 
-    for feature in list(numeric_df):
-        make_density_plot_by_binary_target(churn_df, feature, 'churn')
+    for feature in numeric_cols:
+        make_density_plot_by_binary_target(df, feature, target, images_path)
 
+
+def main(target, images_path, files_path, max_kmeans_clusters=7, min_assoc_rules_support=0.1,
+         assoc_rules_lift_threshold=2):
+    """
+    Ingests and explores data.
+
+    :param target: name of the target column
+    :param files_path: path in which to save files
+    :param images_path: path in which to save images
+    :param max_kmeans_clusters: max number of clusters to consider
+    :param min_assoc_rules_support: min support needed for association rules mining
+    :param assoc_rules_lift_threshold: min lift needed for association rules mining
+    """
+    start_time = time.time()
+    create_exploration_directories(images_path, files_path)
+    df = get_data_to_explore()
+    run_exploration(
+        df=df,
+        target=target,
+        files_path=files_path,
+        images_path=images_path,
+        max_kmeans_clusters=max_kmeans_clusters,
+        min_assoc_rules_support=min_assoc_rules_support,
+        assoc_rules_lift_threshold=assoc_rules_lift_threshold
+    )
     print("--- %s seconds for script to run ---" % (time.time() - start_time))
 
 
 if __name__ == "__main__":
-    main()
+    main(
+        target='churn',
+        images_path=os.path.join('utilities', 'output_files'),
+        files_path=os.path.join('utilities', 'output_images')
+    )

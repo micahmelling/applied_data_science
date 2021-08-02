@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import os
-import joblib
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
@@ -12,75 +11,23 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.preprocessing import FunctionTransformer
 
-from ds_helpers import aws, db
+from data.db import make_mysql_connection
 from helpers.model_helpers import create_train_test_split, create_x_y_split, FeaturesToDict, fill_missing_values
-from app_settings import MODEL_1_PATH, MODEL_FEATURES
-
-
-def extract_model_uid_from_path(model_path):
-    return model_path.split('/')[1]
-
-
-def get_query_start_timestamp(model_uid, db_conn):
-    query = f'''
-    select training_timestamp
-    from churn_model.model_meta_data
-    where model_uid = '{model_uid}';
-    '''
-    df = pd.read_sql(query, db_conn)
-    start_timestamp = df['training_timestamp'][0]
-    return start_timestamp
-
-
-def extract_production_data(start_timestamp, model_uid, db_conn):
-    query = f'''
-    select JSON_EXTRACT(input_output_payloads, "$.input.*") as "values",
-    JSON_KEYS(input_output_payloads, "$.input") as "keys"
-    from (
-    select * from churn_model.model_logs
-    where JSON_EXTRACT(input_output_payloads, "$.output.model_used") = 'model_1'
-    and JSON_EXTRACT(input_output_payloads, "$.output.model_1_path") = '{model_uid}'
-
-    union
-
-    select * from churn_model.model_logs
-    where JSON_EXTRACT(input_output_payloads, "$.output.model_used") = 'model_2'
-    and JSON_EXTRACT(input_output_payloads, "$.output.model_2_path") = '{model_uid}'
-
-    ) model_output
-    where logging_timestamp >= '{start_timestamp}';'''
-    df = pd.read_sql(query, db_conn)
-    columns = df['keys'][0]
-    columns = columns.strip('][').split(', ')
-    columns = [c.replace('"', '') for c in columns]
-    df.drop('keys', 1, inplace=True)
-    df['values'] = df['values'].str.replace('[', '').str.replace(']', '')
-    df = df['values'].str.split(',', expand=True)
-    df.columns = columns
-    df.drop(['uid', 'url', 'endpoint'], 1, inplace=True)
-    for col in list(df):
-        df[col] = df[col].str.replace('"', '')
-        try:
-            df[col] = df[col].astype(float)
-            df[col] = df[col].str.strip()
-        except ValueError:
-            pass
-    return df
-
-
-def recreate_data_used_for_training(model_uid):
-    path = os.path.join(model_uid, 'data')
-    aws.download_folder_from_s3('churn-model-data-science-modeling', path)
-    x_train = joblib.load(os.path.join(path, 'x_train.pkl'))
-    x_train.reset_index(inplace=True, drop=True)
-    x_test = joblib.load(os.path.join(path, 'x_test.pkl'))
-    x_test.reset_index(inplace=True, drop=True)
-    x_df = pd.concat([x_train, x_test], axis=0)
-    x_df = x_df[MODEL_FEATURES]
-    return x_df
+from helpers.utility_helpers import extract_model_uid_from_path, get_query_start_timestamp, extract_production_data, \
+    recreate_data_used_for_training
+from app_settings import MODEL_PATH
+from modeling.config import FEATURE_DTYPE_MAPPING
 
 
 def create_training_data(original_training_df, production_df):
+    """
+    Creates training data for building a model to determine if concept shift has occurred. Rows from production are
+    the positive class.
+
+    :param original_training_df: data used for training the model
+    :param production_df: data seen in production
+    :returns: x_train, x_test, y_train, y_test
+    """
     original_training_df['target'] = 0
     production_df['target'] = 1
     training_df = pd.concat([original_training_df, production_df], axis=0)
@@ -93,6 +40,13 @@ def create_training_data(original_training_df, production_df):
 
 
 def train_model(x_train, y_train):
+    """
+    Trains a simple Random Forest model to determine if production data can be differentiated from training data.
+
+    :param x_train: x_train
+    :param y_train: y_train
+    :returns: best trained pipeline
+    """
     param_grid = {
         'model__max_depth': [5, 10, 15],
         'model__min_samples_leaf': [None, 3],
@@ -126,36 +80,64 @@ def train_model(x_train, y_train):
 
 
 def evaluate_model(estimator, x_test, y_test):
+    """
+    Finds the ROC AUC of the model.
+
+    :param estimator: fitted estimator
+    :param x_test: x_test
+    :param y_test: y_test
+    """
     predictions = estimator.predict_proba(x_test)
     roc_auc = roc_auc_score(y_test, predictions[:, 1])
     return roc_auc
 
 
 def determine_if_concept_shift_has_occurred(score, threshold):
+    """
+    If the model score is above a threshold, our model can differentiate between production and training data. Concept
+    shift has occurred.
+
+    :param score: model score on the test set
+    :param threshold: threshold needed to pass to determine if concept shift has occurred
+    :returns: Boolean
+    """
     if score >= threshold:
         return True
     else:
         return False
 
 
-def main(model_path, db_secret_name, scoring_threshold):
-    db_conn = db.connect_to_mysql(aws.get_secrets_manager_secret(db_secret_name),
-                                  ssl_path=os.path.join('data', 'rds-ca-2019-root.pem'))
+def main(model_path, db_secret_name, scoring_threshold, model_features):
+    """
+    Determines if concept shift has occurred.
+
+    :param model_path: path to the model
+    :param db_secret_name: Secrets Manager secret with DB credentials
+    :param scoring_threshold: threshold needed to pass to determine if concept shift has occurred
+    :param model_features: features used for modeling
+    """
+    db_conn = make_mysql_connection(db_secret_name)
     model_uid = extract_model_uid_from_path(model_path)
     query_start_time = get_query_start_timestamp(model_uid, db_conn)
-    production_df = extract_production_data(query_start_time, MODEL_1_PATH, db_conn)
-    original_training_df = recreate_data_used_for_training(model_uid)
+    production_df = extract_production_data(query_start_time, model_path, db_conn)
+    original_training_df = recreate_data_used_for_training(model_uid, model_features)
     x_train, x_test, y_train, y_test = create_training_data(original_training_df, production_df)
     pipeline = train_model(x_train, y_train)
     model_score = evaluate_model(pipeline, x_test, y_test)
-    shift_occurred = determine_if_concept_shift_has_occurred(roc_auc, scoring_threshold)
+    shift_occurred = determine_if_concept_shift_has_occurred(model_score, scoring_threshold)
     insert_statement = f'''
         INSERT INTO churn_model.concept_shift (shift_occurred, metric_used, scoring_threshold, model_score, model_uid)
         VALUES ({shift_occurred}, 'roc_auc', {scoring_threshold}, {model_score}, '{model_uid}');
         '''
     db_conn.execute(insert_statement)
-    print(f'Has concept shift occurred: {shift_occurred}')
+    with open(os.path.join('utilities', 'concept_shift_log.txt'), 'a') as file:
+        file.write(f'For {model_uid}, has concept shift occurred: {shift_occurred}')
 
 
 if __name__ == "__main__":
-    main(model_path=MODEL_1_PATH, db_secret_name='churn-model-mysql', scoring_threshold=0.55)
+    main(
+        model_path=MODEL_PATH,
+        db_secret_name='churn-model-mysql',
+        scoring_threshold=0.55,
+        model_features=list(FEATURE_DTYPE_MAPPING.keys())
+    )

@@ -3,34 +3,59 @@ import pandas as pd
 import numpy as np
 import pytz
 import warnings
+import joblib
 
-from ds_helpers import aws
+from copy import deepcopy
 from datetime import datetime
-from tqdm import tqdm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split
 
-from modeling.config import S3_BUCKET
 
 warnings.filterwarnings('ignore')
 
 
-def upload_model_directory_to_s3(model_directory):
+def save_data_in_model_directory(model_uid, x_train, x_test, y_train, y_test):
     """
-    Uploads an entire model's directory of data and diagnostics, along with the model itself, to S3.
+    Saves training data into the model directory.
 
-    :param model_directory: name of the model's directory
+    :param model_uid: model uid
+    :param x_train: x train
+    :param x_test: x test
+    :param y_train: y train
+    :param y_test: y test
     """
-    print(f'uploading all files in {model_directory}')
-    directory_walk = os.walk(model_directory)
-    for directory_path, directory_name, file_names in directory_walk:
-        if directory_path != os.path.join(model_directory):
-            sub_dir = os.path.basename(directory_path)
-            for file in tqdm(file_names):
-                aws.upload_file_to_s3(file_name=os.path.join(model_directory, sub_dir, file), bucket=S3_BUCKET)
+    model_uid_data_directory = os.path.join('modeling', model_uid, 'data')
+    make_directories_if_not_exists([model_uid_data_directory])
+    joblib.dump(x_train, os.path.join(model_uid_data_directory, 'x_train.pkl'), compress=9)
+    joblib.dump(x_test, os.path.join(model_uid_data_directory, 'x_test.pkl'), compress=9)
+    joblib.dump(y_train, os.path.join(model_uid_data_directory, 'y_train.pkl'), compress=9)
+    joblib.dump(y_test, os.path.join(model_uid_data_directory, 'y_test.pkl'), compress=9)
+
+
+def ensure_features_are_standardized(df, feature_mapping):
+    """
+    Ensures df 1) includes only the features in feature_mapping and 2) adheres to the dtype mappings in feature_mapping.
+
+    :param df: pandas dataframe
+    :param feature_mapping: dictionary where keys are column names and values are dtypes
+    """
+    df = df.drop(columns=[col for col in df if col not in feature_mapping])
+    cols = list(df)
+    for key, value in feature_mapping.items():
+        if key not in cols:
+            df[key] = np.nan
+    df = df.astype(feature_mapping)
+    df = df[list(feature_mapping.keys())]
+    return df
 
 
 def find_non_dummied_columns(df):
+    """
+    Finds the names of columns that have not been dummied.
+
+    :param df: pandas dataframe
+    :returns: list
+    """
     cols = list(df)
     non_dummied_cols = []
     for col in cols:
@@ -52,18 +77,45 @@ def make_directories_if_not_exists(directories_list):
             os.makedirs(directory)
 
 
-def create_model_uid(model_name):
+def create_uid(base_string):
     """
-    Creates a UID for a model.
+    Creates a UID by concatenating the current timestamp to base_string.
 
-    :param model_name: the base name the model (e.g. random_forest)
+    :param base_string: the base string
     :returns: unique string
     """
     tz = pytz.timezone('US/Central')
     now = str(datetime.now(tz))
     now = now.replace(' ', '').replace(':', '').replace('.', '').replace('-', '')
-    model_uid = model_name + '_' + now
-    return model_uid
+    uid = base_string + '_' + now
+    return uid
+
+
+def save_pipeline(pipeline, model_uid, subdirectory):
+    """
+    Save a modeling pipeline locally as a pkl file into the model_uid's directory.
+
+    :param pipeline: scikit-learn pipeline
+    :param model_uid: model uid
+    :param subdirectory: subdirectory in which to save the pipeline
+    """
+    save_directory = os.path.join('modeling', model_uid, subdirectory)
+    make_directories_if_not_exists([save_directory])
+    joblib.dump(pipeline, os.path.join(save_directory, 'model.pkl'), compress=3)
+
+
+def determine_if_name_in_object(name, py_object):
+    """
+    Determine if a name is in a Python object.
+
+    :param py_object: Python object
+    :param name: name to search for in py_object
+    """
+    object_str = str((type(py_object))).lower()
+    if name in object_str:
+        return True
+    else:
+        return False
 
 
 def fill_missing_values(df, fill_value):
@@ -281,35 +333,63 @@ class FeaturesToDict(BaseEstimator, TransformerMixin):
         return X
 
 
-class TargetEncoder(BaseEstimator, TransformerMixin):
+def transform_data_with_pipeline(pipeline, x_df):
     """
-    Replaces a categorical level with its mean value.
+    Prepares the model and x_test dataframe for extracting feature importance values. This involves applying the
+    preprocessing stepsin the pipeline and converting the output into a dataframe with the appropriate columns.
+    Likewise, this process involves plucking out the model.
+
+    :param pipeline: scikit-learn pipeline with preprocessing steps and model
+    :param x_df: x_test dataframe
+    computationally expensive; default is 10,000. If n_obs is greater than the total number of observations, then
+    50% of the data will be sampled.
+    :returns: model with predict method, transformed x_test dataframe
     """
+    # make a copy of the pipeline to avoid implications of in-place operations
+    pipeline_ = deepcopy(pipeline)
 
-    def __init__(self, sparsity_cutoff=0.001):
-        self.mapping_dict = {}
-        self.sparsity_cutoff = sparsity_cutoff
+    # Extract the names of the features from the dict vectorizers
+    num_dict_vect = pipeline_.named_steps['preprocessor'].named_transformers_.get('numeric_transformer').named_steps[
+        'dict_vectorizer']
+    cat_dict_vect = pipeline_.named_steps['preprocessor'].named_transformers_.get('categorical_transformer').named_steps[
+        'dict_vectorizer']
+    num_features = num_dict_vect.feature_names_
+    cat_features = cat_dict_vect.feature_names_
 
-    def fit(self, X, Y):
-        target_name = list(pd.DataFrame(Y))
-        xy_df = pd.concat([Y, X], axis=1)
-        column_names = list(xy_df.drop(target_name, 1))
-        overall_mean = Y.mean()
+    # Get the boolean masks for the variance threshold and feature selector steps
+    num_feature_selector_support = pipeline_.named_steps['preprocessor'].named_transformers_.get(
+        'numeric_transformer').named_steps['feature_selector'].get_support()
+    cat_feature_selector_support = pipeline_.named_steps['preprocessor'].named_transformers_.get(
+        'categorical_transformer').named_steps['feature_selector'].get_support()
+    variance_threshold_support = pipeline_.named_steps['variance_thresholder'].get_support()
 
-        for column in column_names:
-            col_dict = {}
-            uniques = xy_df[column].unique()
-            for unique in uniques:
-                percentage = xy_df[xy_df[column] == unique].count()[0] / len(xy_df)
-                if percentage > self.sparsity_cutoff:
-                    col_dict[unique] = xy_df[xy_df[column] == unique].mean()[0]
-                else:
-                    col_dict[unique] = overall_mean
-            self.mapping_dict[column] = col_dict
+    # Create a dataframe of column names
+    cols_df = pd.DataFrame({'cols': num_features + cat_features})
 
-        return self
+    # Remove columns based on the feature selectors
+    cols_df = pd.concat([
+        cols_df,
+        pd.DataFrame({'selector_support': list(num_feature_selector_support) + list(cat_feature_selector_support)})
+    ], axis=1)
+    cols_df = cols_df.loc[cols_df['selector_support']]
+    cols_df = cols_df.reset_index()
 
-    def transform(self, X, Y=None):
-        for key, value in self.mapping_dict.items():
-            X[key] = X[key].map(value)
-        return X
+    # Remove columns based on the variance threshold
+    cols_df = pd.concat([
+        cols_df,
+        pd.DataFrame({'threshold_support': variance_threshold_support})
+    ], axis=1)
+    cols_df = cols_df.loc[cols_df['threshold_support']]
+
+    # Make list of final column names
+    cols = cols_df['cols'].tolist()
+
+    # Remove the model
+    pipeline_.steps.pop(len(pipeline_) - 1)
+
+    # Transform the data using the remaining pipeline_ steps, cast to a dataframe, and assign the column names
+    x_df = pipeline_.transform(x_df)
+    x_df = pd.DataFrame(x_df)
+    x_df.columns = cols
+
+    return x_df
