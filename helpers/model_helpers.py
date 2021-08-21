@@ -127,6 +127,7 @@ def fill_missing_values(df, fill_value):
     :returns: pandas dataframe
     """
     df = df.fillna(value=fill_value)
+    df = df.replace('nan', fill_value)
     return df
 
 
