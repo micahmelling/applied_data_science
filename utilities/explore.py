@@ -336,6 +336,7 @@ def run_kmeans_clustering(df, drop_list, max_clusters, fill_na_value=0, samples=
     append_df = pd.get_dummies(append_df, dummy_na=True)
     append_df.fillna(value=fill_na_value, inplace=True)
     cluster_df = append_df.drop(drop_list, 1)
+    cluster_df = pd.DataFrame(StandardScaler().fit_transform(cluster_df), columns=list(cluster_df))
     silhouette_dict = {}
     n_clusters = list(np.arange(2, max_clusters + 1, 1))
     for n in tqdm(n_clusters):
