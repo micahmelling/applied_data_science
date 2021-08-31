@@ -48,7 +48,6 @@ def _evaluate_model(target_series, prediction_series, scorer, metric_name):
     """
     Applies a scorer function to evaluate predictions against the ground-truth labels.
 
-    :param df: pandas dataframe containing the predictions and the actuals
     :param target_series: target series
     :param prediction_series: prediction series
     :param scorer: scoring function to evaluate the predictions
@@ -88,6 +87,53 @@ def run_and_save_evaluation_metrics(df, target, model_uid, evaluation_list, db_s
         log_model_scores_to_mysql(main_df, db_schema_name, db_conn)
     main_df.to_csv(os.path.join('modeling', model_uid, 'diagnostics', 'evaluation_files', 'evaluation_scores.csv'),
                    index=False)
+
+
+def evaluate_model_by_partition(x_df, target, predictions_df, evaluation_list, model_uid, numeric_bins, drop_cols):
+    """
+    Runs evaluation metrics on different subsets of the data. If the data is numeric, it is binned by the number of
+    numeric_bins. Results are written as a csv
+
+    :param x_df: x dataframe
+    :param target: name of target
+    :param predictions_df: dataframe of predictions vs. actuals
+    :param evaluation_list: list of named tuples, which each tuple having the ordering of: the column with the
+    predictions, the scoring function callable, and the name of the metric
+    :param model_uid: model uid
+    :param numeric_bins: number of bins for numeric features
+    :param drop_cols: list of columns to drop
+    """
+    x_df = x_df.reset_index(drop=True)
+    categorical_cols = list(x_df.select_dtypes(include='object'))
+    numeric_cols = list(x_df.select_dtypes(include='number'))
+    predictions_df = pd.concat([predictions_df, x_df], axis=1)
+
+    main_df = pd.DataFrame()
+    for col in categorical_cols + numeric_cols:
+        if col not in drop_cols:
+            if col in numeric_cols:
+                predictions_df[col] = pd.qcut(predictions_df[col], numeric_bins)
+                predictions_df[col] = predictions_df[col].astype(str)
+            levels = list(predictions_df[col].unique())
+            for level in levels:
+                temp_predictions_df = predictions_df.loc[predictions_df[col] == level]
+                classes = list(temp_predictions_df[target].unique())
+                if len(classes) >= 2:
+                    main_level_df = pd.DataFrame()
+                    for evaluation_config in evaluation_list:
+                        temp_df = _evaluate_model(temp_predictions_df[target],
+                                                  temp_predictions_df[evaluation_config.evaluation_column],
+                                                  evaluation_config.scorer_callable, evaluation_config.metric_name)
+                        main_level_df = pd.concat([main_level_df, temp_df], axis=1)
+
+                    main_level_df = main_level_df.T
+                    main_level_df['partition'] = f'{col}_{level}'
+                    main_level_df.reset_index(inplace=True)
+                    main_level_df.rename(columns={0: 'score', 'index': 'metric'}, inplace=True)
+                    main_df = main_df.append(main_level_df)
+
+    main_df.to_csv(os.path.join('modeling', model_uid, 'diagnostics', 'evaluation_files',
+                                'evaluation_scores_by_partition.csv'), index=False)
 
 
 def plot_calibration_curve(y_test, predictions, n_bins, bin_strategy, model_uid):
