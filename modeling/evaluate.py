@@ -286,7 +286,7 @@ def calculate_probability_lift(y_test, probability_predictions, model_uid, n_bin
     proba_col = columns[1]
     base_rate = df[class_col].mean()
 
-    df['1_prob_bin'] = pd.qcut(df[proba_col], q=n_bins, labels=list(range(1, 11)))
+    df['1_prob_bin'] = pd.qcut(df[proba_col], q=n_bins, labels=list(range(1, n_bins + 1)))
     grouped_df = df.groupby('1_prob_bin').agg({proba_col: 'mean', class_col: 'mean'})
     grouped_df.reset_index(inplace=True)
     grouped_df['1_prob_diff'] = grouped_df[proba_col] - grouped_df[class_col]
