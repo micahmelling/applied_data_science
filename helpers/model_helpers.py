@@ -93,7 +93,7 @@ def create_uid(base_string):
 
 def save_pipeline(pipeline, model_uid, subdirectory):
     """
-    Save a modeling pipeline locally as a pkl file into the model_uid's directory.
+    Saves a modeling pipeline locally as a pkl file into the model_uid's directory.
 
     :param pipeline: scikit-learn pipeline
     :param model_uid: model uid
@@ -102,6 +102,19 @@ def save_pipeline(pipeline, model_uid, subdirectory):
     save_directory = os.path.join('modeling', model_uid, subdirectory)
     make_directories_if_not_exists([save_directory])
     joblib.dump(pipeline, os.path.join(save_directory, 'model.pkl'), compress=3)
+
+
+def save_cv_scores(df, model_uid, subdirectory):
+    """
+    Saves cross validation scores locally as a csv file into the model_uid's directory.
+
+    :param df: dataframe of cv scores
+    :param model_uid: model uid
+    :param subdirectory: subdirectory in which to save the output
+    """
+    save_directory = os.path.join('modeling', model_uid, subdirectory)
+    make_directories_if_not_exists([save_directory])
+    df.to_csv(os.path.join(save_directory, 'cv_scores.csv'), index=False)
 
 
 def determine_if_name_in_object(name, py_object):
