@@ -128,6 +128,7 @@ def evaluate_model_by_partition(x_df, target, predictions_df, evaluation_list, m
 
                     main_level_df = main_level_df.T
                     main_level_df['partition'] = f'{col}_{level}'
+                    main_level_df['observations'] = len(temp_predictions_df)
                     main_level_df.reset_index(inplace=True)
                     main_level_df.rename(columns={0: 'score', 'index': 'metric'}, inplace=True)
                     main_df = main_df.append(main_level_df)
