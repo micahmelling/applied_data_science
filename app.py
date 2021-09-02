@@ -17,7 +17,7 @@ from ds_helpers.aws import log_payload_to_s3
 
 from redis_worker import conn
 from app_settings import ENVIRONMENT, FLASK_SECRET, OUTPUT_LOGS_S3_BUCKET_NAME, MODEL_PATH, \
-    DATABASE_SECRET, OUTPUT_LOGS_TABLE_NAME, SENTRY_DSN, DB_SCHEMA, URL
+    DATABASE_SECRET, OUTPUT_LOGS_TABLE_NAME, SENTRY_DSN, DB_SCHEMA
 from data.db import retrieve_app_config, get_client_ltv_table, get_training_data, get_hashed_password_for_username, \
     log_payloads_to_mysql, make_mysql_connection
 from helpers.app_helpers import hit_config_refresh_endpoint, make_prediction, convert_json_to_dataframe, \
