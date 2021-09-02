@@ -344,6 +344,7 @@ def calculate_probability_lift(y_test, probability_predictions, model_uid, n_bin
     lift = base_rate_diff / prob_diff
     pd.DataFrame({'lift': [lift]}).to_csv(os.path.join('modeling', model_uid, 'diagnostics', 'evaluation_files',
                                                        'proba_lift.csv'), index=False)
+    return lift
 
 
 def plot_cumulative_gains_chart(y_test, probability_predictions, model_uid):
