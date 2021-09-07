@@ -13,3 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 USER appuser
 EXPOSE 8000
 RUN chmod a+rx run.sh
+CMD ["./run.sh"]

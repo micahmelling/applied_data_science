@@ -15,7 +15,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from flasgger import Swagger
 from ds_helpers.aws import log_payload_to_s3
 
-from redis_worker import conn
 from app_settings import ENVIRONMENT, FLASK_SECRET, OUTPUT_LOGS_S3_BUCKET_NAME, MODEL_PATH, \
     DATABASE_SECRET, OUTPUT_LOGS_TABLE_NAME, SENTRY_DSN, DB_SCHEMA
 from data.db import retrieve_app_config, get_client_ltv_table, get_training_data, get_hashed_password_for_username, \
@@ -220,11 +219,5 @@ def predict():
             output_payload = session.get("output", {})
             output_payload["logging_timestamp"] = str(get_current_timestamp())
             output_payload["logging_epoch"] = time.time()
-            job = q.enqueue_call(
-                func=log_payload_to_s3, args=(input_payload, output_payload, uid, OUTPUT_LOGS_S3_BUCKET_NAME, ),
-                result_ttl=20
-            )
-            job = q.enqueue_call(
-                func=log_payloads_to_mysql, args=(input_payload, output_payload, OUTPUT_LOGS_TABLE_NAME, DB_SCHEMA,
-                                                  DATABASE_SECRET, ), result_ttl=20
-            )
+            log_payload_to_s3(input_payload, output_payload, uid, OUTPUT_LOGS_S3_BUCKET_NAME)
+            log_payloads_to_mysql(input_payload, output_payload, OUTPUT_LOGS_TABLE_NAME, DB_SCHEMA, DATABASE_SECRET)

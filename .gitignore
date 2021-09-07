@@ -2,6 +2,7 @@
 !requirements.txt
 *.pyc
 *.csv
+!site_churn_data.csv
 *.xlsx
 *.png
 *.jpeg
