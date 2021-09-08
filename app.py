@@ -5,7 +5,6 @@ import sentry_sdk
 import flask_monitoringdashboard as dashboard
 import pandas as pd
 
-from rq import Queue
 from copy import deepcopy
 from hashlib import sha256
 from flask import Flask, session, request, render_template, redirect, url_for, flash
@@ -61,7 +60,6 @@ Talisman(app)
 app.secret_key = FLASK_SECRET
 dashboard.bind(app)
 swag = Swagger(app)
-q = Queue(connection=conn)
 
 
 @app.before_request
