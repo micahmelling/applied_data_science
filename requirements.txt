@@ -7,7 +7,7 @@ seaborn==0.10.0
 matplotlib==3.2.0
 tqdm==4.46.1
 ppscore==1.1.1
-numpy==1.19.2
+numpy==1.22.0
 mlxtend==0.18.0
 xgboost==1.2.1
 lightgbm==3.0.0
