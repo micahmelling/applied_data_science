@@ -12,7 +12,7 @@ mlxtend==0.18.0
 xgboost==1.2.1
 lightgbm==3.0.0
 shap==0.35.0
-Flask==1.1.2
+Flask==2.3.2
 sentry-sdk[flask]==0.19.4
 APScheduler==3.6.3
 pytest==6.1.2
